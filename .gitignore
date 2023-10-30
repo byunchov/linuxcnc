@@ -59,3 +59,7 @@ docs/help/hu/*
 docs/help/nb/*
 docs/help/vi/*
 docs/help/zh_CN/*
+debian/autoreconf.after
+debian/autoreconf.before
+debian/debhelper-build-stamp
+src/config.h.in~
