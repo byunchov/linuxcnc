@@ -59,6 +59,8 @@ DEFAULT = 0
 WARNING = 1
 CRITICAL = 2
 
+VERSION ='1.0'
+
 class HandlerClass:
     def __init__(self, halcomp, widgets, paths):
         self.h = halcomp
@@ -229,6 +231,10 @@ class HandlerClass:
         # no buttons hide frame
         if flag:
             self.w.frame_macro_buttons.hide()
+
+        message = "--- QtDragon_hd Version {} on Linuxcnc {} ---".format(
+            VERSION, STATUS.get_linuxcnc_version())
+        STATUS.emit('update-machine-log', message, None)
 
     #############################
     # SPECIAL FUNCTIONS SECTION #
@@ -1040,6 +1046,8 @@ class HandlerClass:
         AUX_PRGM.load_gcode_ripper()
 
     def btn_about_clicked(self):
+        self.add_status("QtDragon_hd Version {} on Linuxcnc {} ".format(
+            VERSION, STATUS.get_linuxcnc_version()), CRITICAL)
         info = ACTION.GET_ABOUT_INFO()
         self.w.aboutDialog_.showdialog()
 
@@ -1196,13 +1204,17 @@ class HandlerClass:
         retract = self.w.lineEdit_retract_distance.text()
         safe_z = self.w.lineEdit_z_safe_travel.text()
         rtn = ACTION.TOUCHPLATE_TOUCHOFF(search_vel, probe_vel, max_probe, 
-                z_offset, retract, safe_z, self.touchoff_return)
+                z_offset, retract, safe_z, self.touchoff_return, self.touchoff_error)
         if rtn == 0:
             self.add_status("Touchoff routine is already running", WARNING)
 
     def touchoff_return(self, data):
         self.add_status("Touchplate touchoff routine returned successfully")
         self.add_status("Touchplate returned:"+data, CRITICAL)
+
+    def touchoff_error(self, data):
+        ACTION.SET_ERROR_MESSAGE(data)
+        self.add_status(data, CRITICAL)
 
     def kb_jog(self, state, joint, direction, fast = False, linear = True):
         ACTION.SET_MANUAL_MODE()

@@ -17,7 +17,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 '''
 
-VER = '11'
+VER = '13'
 
 ##############################################################################
 # the next line suppresses undefined variable errors in VSCode               #
@@ -911,6 +911,9 @@ def param_changed(widget, value):
             pmx485_pressure_changed(float(value))
     elif item == 'cut-speed':
         hal.set_p('plasmac.cut-feed-rate',f"{value}")
+    elif item[1:] == '-pierce-offset':
+        if extHalPins:
+            comp[item] = value
     else:
         hal.set_p(f"plasmac.{item}",f"{value}")
 
@@ -1153,11 +1156,13 @@ def set_toggle_pins(button):
     togglePins[button]['state'] = hal.get_value(togglePins[button]['pin'])
     if togglePins[button]['state']:
         rE(f"{fbuttons}.button{button} configure -bg {colorActive}")
+        rE(f"{fbuttons}.button{button} configure -text {{{togglePins[button]['ontext']}}}")
     else:
         if togglePins[button]['runcritical']:
             rE(f"{fbuttons}.button{button} configure -bg {colorWarn}")
         else:
             rE(f"{fbuttons}.button{button} configure -bg {colorBack}")
+        rE(f"{fbuttons}.button{button} configure -text {{{togglePins[button]['offtext']}}}")
 
 def jog_default_changed(value):
     set_jog_slider(int(value) / (vars.max_speed.get() * 60))
@@ -2392,19 +2397,37 @@ def user_button_setup():
                 else:
                     parmError = True
         elif bCode.startswith('toggle-halpin '):
-            if len(bCode.split()) > 1 and len(bCode.split()) < 4:
+            if len(bCode.split()) > 1:
+                ontext = bCode.split(';;')[1] if ';;' in bCode else ''
+                ontext = ontext if ontext else bName
                 codes = bCode.strip().split()
                 if validate_hal_pin(codes[1], n, 'toggle-halpin'):
-                    outCode = {'code':'toggle-halpin', 'pin':codes[1], 'critical':False}
+                    outCode = {'code':'toggle-halpin', 'pin':codes[1], 'critical':False, 'ontext':ontext}
                     outCode['pin'] = codes[1]
                     if len(codes) == 3 and codes[2] == 'runcritical':
                         outCode['critical'] = True
                         criticalButtons.append(n)
-                    togglePins[str(n)] = {'pin':outCode['pin'], 'state':hal.get_value(outCode['pin']), 'runcritical':outCode['critical']}
+                    togglePins[str(n)] = {'pin':outCode['pin'], 'state':hal.get_value(outCode['pin']), \
+                                          'runcritical':outCode['critical'], 'ontext':outCode['ontext'], \
+                                          'offtext':bName}
                 else:
                     parmError = True
         elif bCode and bCode not in singleCodes:
-            codes = bCode.strip().split('\\')
+            if 'dual-code' in bCode:
+                # incoming code is: "dual-code" ;; code1 ;; label1 ;; code2 ;; checked (optional = true)
+                data = bCode.split(';;')
+                if len(data) not in [4, 5]:
+                    outCode = {'code':None}
+                    continue
+                else:
+                    if len(data) == 5 and data[4].strip().lower() == 'true':
+                        checked = True
+                    else:
+                        checked = False
+                    dualCodes[str(n)] = {'ontext':data[2].strip(), 'offtext':bName.strip(), 'checked':checked}
+                codes = [code for code in data[1].split('\\') + ['dual-code'] + data[3].split('\\')]
+            else:
+                codes = bCode.strip().split('\\')
             codes = [x.strip() for x in codes]
             outCode['code'] = []
             for cn in range(len(codes)):
@@ -2424,9 +2447,15 @@ def user_button_setup():
                     outCode['code'].append(['ocode', codes[cn]])
                 elif codes[cn][0].lower() in 'gm':
                     outCode['code'].append(['gcode', codes[cn]])
+                elif codes[cn] == 'dual-code':
+                    outCode['code'].append(codes[cn])
                 else:
                     outCode = {'code': None}
                     break
+            if 'dual-code' in bCode:
+                dualCodes[str(n)]['oncode'] = outCode['code'][:outCode['code'].index('dual-code')]
+                dualCodes[str(n)]['offcode'] = outCode['code'][outCode['code'].index('dual-code')+1:]
+                outCode['code'] = 'dual-code'
         else:
             outCode = {'code':None}
         if rE(f"winfo exists {fbuttons}.button{n}") == '0':
@@ -2539,6 +2568,16 @@ def user_button_pressed(button, code):
         else:
             hal.set_p(code['pin'], str(not hal.get_value(code['pin'])))
     else:
+        if button in dualCodes:
+            if rE(f"{fbuttons}.button{button} cget -text") == dualCodes[button]['offtext']:
+                rE(f"{fbuttons}.button{button} configure -text {{{dualCodes[button]['ontext']}}}")
+                code['code'] = dualCodes[button]['oncode']
+                if dualCodes[button]['checked']:
+                    rE(f"{fbuttons}.button{button} configure -bg {colorActive}")
+            else:
+                rE(f"{fbuttons}.button{button} configure -text {{{dualCodes[button]['offtext']}}}")
+                code['code'] = dualCodes[button]['offcode']
+                rE(f"{fbuttons}.button{button} configure -bg {colorBack}")
         for n in range(len(code['code'])):
             if code['code'][n][0] == 'python3':
                 cmd = f"python3 {code['code'][n][1]}"
@@ -3256,7 +3295,6 @@ pmx485FaultName = {
 # called during setup
 def ext_hal_create():
     global extHalPins
-    extHalPins = {}
     for pin in ['abort', 'power', 'run', 'pause', 'run-pause', 'touchoff',
                 'probe','pulse', 'frame-job']:
         comp.newpin(f"ext.{pin}", hal.HAL_BIT, hal.HAL_IN)
@@ -3264,6 +3302,9 @@ def ext_hal_create():
     # external pins for user button toggle and pulse
     for pin in range(3):
         comp.newpin(f"ext.out_{pin}", hal.HAL_BIT, hal.HAL_OUT)
+    # pins for pierce only offsets
+    for pin in 'xy':
+        comp.newpin(f"{pin}-pierce-offset", hal.HAL_FLOAT, hal.HAL_OUT)
 
 # called every cycle by user_live_update
 def ext_hal_watch():
@@ -4100,6 +4141,7 @@ orientStart = False
 configPath = os.getcwd()
 p2Path = os.path.join(configPath, 'plasmac2')
 if os.path.isdir(os.path.join(p2Path, 'lib')):
+    extHalPins = {}
     import sys
     libPath = os.path.join(p2Path, 'lib')
     sys.path.append(libPath)
@@ -4247,6 +4289,7 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
     cutType = 0
     togglePins = {}
     pulsePins = {}
+    dualCodes = {}
     currentTool = None
     manualCut = {'state':False, 'feed':vars.jog_speed.get()}
     singleCut = {'state':False, 'G91':False}
@@ -4912,10 +4955,11 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
     rE(f"frame {fparam}.c3")
     rE(f"labelframe {fparam}.c1.probe -text {{{_('Probing')}}} -relief groove")
     rE(f"labelframe {fparam}.c1.motion -text {{{_('Motion')}}} -relief groove")
-    rE(f"labelframe {fparam}.c2.thc -text {{{_('THC')}}} -relief groove")
     rE(f"labelframe {fparam}.c1.safety -text {{{_('Safety')}}} -relief groove")
-    rE(f"labelframe {fparam}.c3.arc -text {{{_('Arc')}}} -relief groove")
+    rE(f"labelframe {fparam}.c2.thc -text {{{_('THC')}}} -relief groove")
     rE(f"labelframe {fparam}.c2.scribe -text {{{_('Scribe')}}} -relief groove")
+    rE(f"labelframe {fparam}.c2.pierce -text {{{_('Pierce Only')}}} -relief groove")
+    rE(f"labelframe {fparam}.c3.arc -text {{{_('Arc')}}} -relief groove")
     rE(f"labelframe {fparam}.c3.spotting -text {{{_('Spotting')}}} -relief groove")
     rE(f"label {fparam}.c2.thc.thc-autoL -text {{{_('Auto')}}} -width 15 -anchor e")
     rE(f"checkbutton {fparam}.c2.thc.thc-auto -width 2 -anchor w -indicatoron 0")
@@ -4929,6 +4973,7 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
               [f"{fparam}.c1.probe",'skip-ihs-distance',0,0,0,999,1,'Skip IHS','Skip IHS Distance'], \
               [f"{fparam}.c1.probe",'offset-feed-rate',0,offsetFeedRate*0.8,0,offsetFeedRate,1,'Offset Speed','Offset Feed Rate'], \
               [f"{fparam}.c1.motion",'setup-feed-rate',0,int(thcFeedRate * 0.8),1000,thcFeedRate,1,'Setup Speed','Setup Feed Rate'], \
+              [f"{fparam}.c1.safety",'safe-height',0,20,0,maxHeight,1,'Safe Height','Safe Height'], \
               [f"{fparam}.c2.thc",'thc-delay',1,0.5,0,9,0.1,'Start Delay','THC Delay'], \
               [f"{fparam}.c2.thc",'thc-sample-counts',0,50,10,1000,1,'Auto Counts','THC Sample Counts'], \
               [f"{fparam}.c2.thc",'thc-sample-threshold',1,1,0.1,9,0.1,'Auto Threshold (V)','THC Sample Threshold'], \
@@ -4938,7 +4983,10 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
               [f"{fparam}.c2.thc",'pid-d-gain',0,0,0,1000,1,'PID D Gin','Pid D Gain'], \
               [f"{fparam}.c2.thc",'cornerlock-threshold',0,90,1,99,1,'VAD Threshold (%)','Velocity Anti Dive Threshold'], \
               [f"{fparam}.c2.thc",'voidlock-slope',0,500,1,10000,1,'Void Slope (V/sec)','Void Sense Slope'], \
-              [f"{fparam}.c1.safety",'safe-height',0,20,0,maxHeight,1,'Safe Height','Safe Height'], \
+              [f"{fparam}.c2.scribe",'scribe-arm-delay',1,0,0,9,0.1,'Arm Delay','Scribe Arming Delay'], \
+              [f"{fparam}.c2.scribe",'scribe-on-delay',1,0,0,9,0.1,'On delay','Scribe On Delay'], \
+              [f"{fparam}.c2.pierce",'x-pierce-offset',1,1.6,-5,5,0.1,'X Offset','X Pierce Offset'], \
+              [f"{fparam}.c2.pierce",'y-pierce-offset',1,0,-5,5,0.1,'Y Offset','Y Pierce Offset'], \
               [f"{fparam}.c3.arc",'arc-fail-delay',1,3,0.1,60,0.1,'Fail Timeout','Arc Fail Timeout'], \
               [f"{fparam}.c3.arc",'arc-max-starts',0,3,1,9,1,'Max. Attempts','Arc Maximum Starts'], \
               [f"{fparam}.c3.arc",'restart-delay',0,3,1,60,1,'Retry Delay','Arc Restart Delay'], \
@@ -4947,8 +4995,6 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
               [f"{fparam}.c3.arc",'arc-ok-high',0,99999,0,99999,1,'OK High Volts','Arc OK High'], \
               [f"{fparam}.c3.arc",'arc-ok-low',0,60,0,100,1,'OK Low Volts','Arc OK Low'], \
               [f"{fparam}.c3.arc",'height-per-volt',3,0.1,0.025,0.5,0.01,'Height Per Volt','Height Per Volt'], \
-              [f"{fparam}.c2.scribe",'scribe-arm-delay',1,0,0,9,0.1,'Arm Delay','Scribe Arming Delay'], \
-              [f"{fparam}.c2.scribe",'scribe-on-delay',1,0,0,9,0.1,'On delay','Scribe On Delay'], \
               [f"{fparam}.c3.spotting",'spotting-threshold',0,1,0,199,1,'Threshold (V)','Spotting Threshold'], \
               [f"{fparam}.c3.spotting",'spotting-time',0,0,0,9999,1,'On Time (mS)','Spotting Time'], \
              ]
@@ -4974,6 +5020,10 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
                 cpItem[2:7] = [2,0.75,0,maxHeight,0.01]
             elif cpItem[1] == 'height-per-volt':
                 cpItem[2:7] = [4,0.004,0.001,0.020,0.001]
+            elif cpItem[1] == 'x-pierce-offset':
+                cpItem[2:7] = [2,0.06,-0.2,0.2,0.01]
+            elif cpItem[1] == 'y-pierce-offset':
+                cpItem[2:7] = [2,0,-0.2,0.2,0.01]
         if cpItem[0] != cpFrame:
             cpFrame = cpItem[0]
             cpRow = 0
@@ -5002,6 +5052,7 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
     rE(f"grid {fparam}.c1.safety -column 0 -row 2 -sticky new -padx {{4 2}} -pady {{4 0}} -ipady 4")
     rE(f"grid {fparam}.c2.thc -column 0 -row 0 -sticky new -padx {{2 2}} -pady {{4 0}} -ipady 4")
     rE(f"grid {fparam}.c2.scribe -column 0 -row 1 -sticky new -padx {{2 2}} -pady {{4 0}} -ipady 4")
+    rE(f"grid {fparam}.c2.pierce -column 0 -row 2 -sticky new -padx {{2 2}} -pady {{4 0}} -ipady 4")
     rE(f"grid {fparam}.c3.arc -column 0 -row 0 -sticky new -padx {{2 2}} -pady {{4 0}} -ipady 4")
     rE(f"grid {fparam}.c3.spotting -column 0 -row 1 -sticky new -padx {{2 2}} -pady {{4 0}} -ipady 4")
     rE(f"grid {fparam}.c1 -column 0 -row 0 -sticky n")
@@ -5265,6 +5316,7 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
             notifications.add(n[0], n[1])
     update_title()
     o.show_overlay = False
+    o.colors['overlay_alpha'] = 0
     pVars.jogMultiplier.set(1)
     hal.set_p('plasmac.mode', f"{pVars.plasmacMode.get()}")
     hal.set_p('plasmac.torch-enable', '0')
@@ -5512,12 +5564,11 @@ def user_hal_pins():
     install_kb_text(root_window)
     install_kp_text(root_window)
     # setup the about text
-    rE('text .about.message1 -borderwidth 0 -relief flat -width 40 -height 5 -wrap word')
-    rE('.about.message1 insert end {\nplasmac2 extensions v{VER}\nCopyright (C) 2022\nPhillip A Carter and Gregory D Carl}')
-    rE('.about.message1 configure -state disabled')
-    rE('pack forget .about.ok')
-    rE('pack .about.message1 -expand 1 -fill both')
-    rE('pack .about.ok')
+    rE('.about.message configure -height 14')
+    text = f"\n\nplasmac2 extensions v{VER}\nCopyright (C) 2022, 2023\nPhillip A Carter and Gregory D Carl"
+    rE('.about.message configure -state normal')
+    rE(f".about.message insert end {{{text}}}")
+    rE('.about.message configure -state disabled')
     previewSize = {'w':rE(f"winfo width {tabs_preview}"), 'h':rE(f"winfo height {tabs_preview}")}
 
 
@@ -5529,10 +5580,13 @@ def user_live_update():
     # don't do any updates until first run is complete.
     if firstRun:
         # test this last command in axis to see if we are loaded
-        if widgets.numbers_text.bind():
+        if widgets.numbers_text.bind() and extHalPins:
             upFile = os.path.join(configPath, 'user_periodic.py')
             # setup the colors
             color_change()
+            # set the pierce offset hal pins
+            comp['x-pierce-offset'] = widgetValues['.param.c2.pierce.x-pierce-offset']
+            comp['y-pierce-offset'] = widgetValues['.param.c2.pierce.y-pierce-offset']
             firstRun = None
         return
     if orientStart:
