@@ -141,6 +141,7 @@ enum UnaryOperations
     SQRT = 12,
     TAN = 13,
     EXISTS = 14,
+    TOOL_DIA = 15,
 };
 
 
