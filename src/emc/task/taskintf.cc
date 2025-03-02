@@ -1128,7 +1128,7 @@ int emcTrajSetMaxAcceleration(double acc)
     return 0;
 }
 
-int emcTrajSetHome(EmcPose home)
+int emcTrajSetHome(const EmcPose& home)
 {
 #ifdef ISNAN_TRAP
     if (std::isnan(home.tran.x) || std::isnan(home.tran.y) || std::isnan(home.tran.z) ||
@@ -1334,7 +1334,7 @@ int emcTrajResume()
     return usrmotWriteEmcmotCommand(&emcmotCommand);
 }
 
-int emcTrajDelay(double delay)
+int emcTrajDelay(double /*delay*/)
 {
     /* nothing need be done here - it's done in task controller */
 
@@ -1351,7 +1351,7 @@ double emcTrajGetAngularUnits()
     return TrajConfig.AngularUnits;
 }
 
-int emcTrajSetOffset(EmcPose tool_offset)
+int emcTrajSetOffset(const EmcPose& tool_offset)
 {
     emcmotCommand.command = EMCMOT_SET_OFFSET;
     emcmotCommand.tool_offset = tool_offset;
@@ -1377,7 +1377,7 @@ int emcTrajSetTermCond(int cond, double tolerance)
     return usrmotWriteEmcmotCommand(&emcmotCommand);
 }
 
-int emcTrajLinearMove(EmcPose end, int type, double vel, double ini_maxvel, double acc,
+int emcTrajLinearMove(const EmcPose& end, int type, double vel, double ini_maxvel, double acc,
                       int indexer_jnum)
 {
 #ifdef ISNAN_TRAP
@@ -1404,8 +1404,8 @@ int emcTrajLinearMove(EmcPose end, int type, double vel, double ini_maxvel, doub
     return usrmotWriteEmcmotCommand(&emcmotCommand);
 }
 
-int emcTrajCircularMove(EmcPose end, PM_CARTESIAN center,
-			PM_CARTESIAN normal, int turn, int type, double vel, double ini_maxvel, double acc)
+int emcTrajCircularMove(const EmcPose& end, const PM_CARTESIAN& center,
+			const PM_CARTESIAN& normal, int turn, int type, double vel, double ini_maxvel, double acc)
 {
 #ifdef ISNAN_TRAP
     if (std::isnan(end.tran.x) || std::isnan(end.tran.y) || std::isnan(end.tran.z) ||
@@ -1449,7 +1449,7 @@ int emcTrajClearProbeTrippedFlag()
     return usrmotWriteEmcmotCommand(&emcmotCommand);
 }
 
-int emcTrajProbe(EmcPose pos, int type, double vel, double ini_maxvel, double acc, unsigned char probe_type)
+int emcTrajProbe(const EmcPose& pos, int type, double vel, double ini_maxvel, double acc, unsigned char probe_type)
 {
 #ifdef ISNAN_TRAP
     if (std::isnan(pos.tran.x) || std::isnan(pos.tran.y) || std::isnan(pos.tran.z) ||
@@ -1473,7 +1473,7 @@ int emcTrajProbe(EmcPose pos, int type, double vel, double ini_maxvel, double ac
     return usrmotWriteEmcmotCommand(&emcmotCommand);
 }
 
-int emcTrajRigidTap(EmcPose pos, double vel, double ini_maxvel, double acc, double scale)
+int emcTrajRigidTap(const EmcPose& pos, double vel, double ini_maxvel, double acc, double scale)
 {
 #ifdef ISNAN_TRAP
     if (std::isnan(pos.tran.x) || std::isnan(pos.tran.y) || std::isnan(pos.tran.z)) {
@@ -1614,16 +1614,16 @@ int emcPositionLoad() {
     double positions[EMCMOT_MAX_JOINTS];
     IniFile ini;
     ini.Open(emc_inifile);
-    const char *posfile = ini.Find("POSITION_FILE", "TRAJ");
+    auto posfile = ini.Find("POSITION_FILE", "TRAJ");
     ini.Close();
-    if(!posfile || !posfile[0]) return 0;
-    FILE *f = fopen(posfile, "r");
+    if(!posfile || !posfile.value()[0]) return 0;
+    FILE *f = fopen(*posfile, "r");
     if(!f) return 0;
     for(int i=0; i<EMCMOT_MAX_JOINTS; i++) {
 	int r = fscanf(f, "%lf", &positions[i]);
 	if(r != 1) {
             fclose(f);
-            rcs_print("%s: failed to load joint %d position from %s, ignoring\n", __FUNCTION__, i, posfile);
+            rcs_print("%s: failed to load joint %d position from %s, ignoring\n", __FUNCTION__, i, *posfile);
             return -1;
         }
     }
@@ -1631,7 +1631,7 @@ int emcPositionLoad() {
     int result = 0;
     for(int i=0; i<EMCMOT_MAX_JOINTS; i++) {
 	if(emcJointSetMotorOffset(i, -positions[i]) != 0) {
-            rcs_print("%s: failed to set joint %d position (%.6f) from %s, ignoring\n", __FUNCTION__, i, positions[i], posfile);
+            rcs_print("%s: failed to set joint %d position (%.6f) from %s, ignoring\n", __FUNCTION__, i, positions[i], *posfile);
             result = -1;
         }
     }
@@ -1641,7 +1641,7 @@ int emcPositionLoad() {
 
 int emcPositionSave() {
     IniFile ini;
-    const char *posfile;
+    std::optional<const char*> posfile;
 
     ini.Open(emc_inifile);
     try {
@@ -1652,10 +1652,10 @@ int emcPositionSave() {
     }
     ini.Close();
 
-    if(!posfile || !posfile[0]) return 0;
+    if(!posfile || !posfile.value()[0]) return 0;
     // like the var file, make sure the posfile is recreated according to umask
-    unlink(posfile);
-    FILE *f = fopen(posfile, "w");
+    unlink(*posfile);
+    FILE *f = fopen(*posfile, "w");
     if(!f) return -1;
     for(int i=0; i<EMCMOT_MAX_JOINTS; i++) {
 	int r = fprintf(f, "%.17f\n", emcmotStatus.joint_status[i].pos_fb);
@@ -1905,7 +1905,7 @@ int emcSpindleDecrease(int spindle)
     return usrmotWriteEmcmotCommand(&emcmotCommand);
 }
 
-int emcSpindleConstant(int spindle)
+int emcSpindleConstant(int /*spindle*/)
 {
     return 0; // nothing to do
 }

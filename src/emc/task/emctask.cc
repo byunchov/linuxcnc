@@ -14,7 +14,7 @@
 ********************************************************************/
 
 #include <stdlib.h>
-#include <string.h>		// strncpy()
+#include <rtapi_string.h>	// rtapi_strlcpy()
 #include <sys/stat.h>		// struct stat
 #include <unistd.h>		// stat()
 #include <limits.h>		// PATH_MAX
@@ -34,7 +34,6 @@
 #include "task.hh"		// emcTaskCommand etc
 #include "taskclass.hh"
 #include "motion.h"
-#include <rtapi_string.h>
 
 #define USER_DEFINED_FUNCTION_MAX_DIRS 5
 #define MAX_M_DIRS (USER_DEFINED_FUNCTION_MAX_DIRS+1)
@@ -112,56 +111,53 @@ static void user_defined_add_m_code(int num, double arg1, double arg2)
 
 int emcTaskInit()
 {
-    char mdir[MAX_M_DIRS][PATH_MAX+1];
+    char mdir[MAX_M_DIRS][PATH_MAX];
     int num,dct,dmax;
     char path[EMC_SYSTEM_CMD_LEN];
     struct stat buf;
     IniFile inifile;
-    const char *inistring;
+    std::optional<const char*> inistring;
     ZERO_EMC_POSE(emcStatus->task.toolOffset);
 
     inifile.Open(emc_inifile);
 
     // Identify user_defined_function directories
-    if (NULL != (inistring = inifile.Find("PROGRAM_PREFIX", "DISPLAY"))) {
-        strncpy(mdir[0],inistring, sizeof(mdir[0]));
-        if (mdir[0][sizeof(mdir[0])-1] != '\0') {
+    if ((inistring = inifile.Find("PROGRAM_PREFIX", "DISPLAY"))) {
+        if (strlen(*inistring) >= sizeof(mdir[0])) {
             rcs_print("[DISPLAY]PROGRAM_PREFIX too long (max len %zu)\n", sizeof(mdir[0]));
             return -1;
         }
+        strncpy(mdir[0], *inistring, sizeof(mdir[0]));
     } else {
         // default dir if no PROGRAM_PREFIX
-        strncpy(mdir[0],"nc_files", sizeof(mdir[0]));
-        if (mdir[0][sizeof(mdir[0])-1] != '\0') {
-            rcs_print("default nc_files too long (max len %zu)\n", sizeof(mdir[0]));
-            return -1;
-        }
+        rtapi_strlcpy(mdir[0], "nc_files", sizeof(mdir[0]));
     }
     dmax = 1; //one directory mdir[0],  USER_M_PATH specifies additional dirs
 
     // user can specify a list of directories for user defined functions
     // with a colon (:) separated list
-    if (NULL != (inistring = inifile.Find("USER_M_PATH", "RS274NGC"))) {
+    if ((inistring = inifile.Find("USER_M_PATH", "RS274NGC"))) {
         char* nextdir;
         char tmpdirs[PATH_MAX];
 
         for (dct=1; dct < MAX_M_DIRS; dct++) mdir[dct][0] = 0;
 
-        strncpy(tmpdirs,inistring, sizeof(tmpdirs));
-        if (tmpdirs[sizeof(tmpdirs)-1] != '\0') {
+        if (strlen(*inistring) >= sizeof(tmpdirs)) {
             rcs_print("[RS274NGC]USER_M_PATH too long (max len %zu)\n", sizeof(tmpdirs));
             return -1;
         }
+        strncpy(tmpdirs, *inistring, sizeof(tmpdirs));
 
         nextdir = strtok(tmpdirs,":");  // first token
         dct = 1;
         while (dct < MAX_M_DIRS) {
             if (nextdir == NULL) break; // no more tokens
-            strncpy(mdir[dct],nextdir, sizeof(mdir[dct]));
-            if (mdir[dct][sizeof(mdir[dct])-1] != '\0') {
-                rcs_print("[RS274NGC]USER_M_PATH component (%s) too long (max len %zu)\n", nextdir, sizeof(mdir[dct]));
+            if (strlen(nextdir) >= sizeof(mdir[dct])) {
+                rcs_print("[RS274NGC]USER_M_PATH component (%s) too long (max len %zu)\n",
+                          nextdir, sizeof(mdir[dct]));
                 return -1;
             }
+            strncpy(mdir[dct], nextdir, sizeof(mdir[dct]));
             nextdir = strtok(NULL,":");
             dct++;
         }
@@ -276,7 +272,7 @@ int emcTaskSetMode(EMC_TASK_MODE mode)
     int retval = 0;
 
     if (jogging_is_active()) {
-        emcOperatorError("Ignoring task mode change while jogging");
+        rcs_print("Ignoring task mode change while jogging");
         return 0;
     }
 
@@ -326,11 +322,11 @@ int emcTaskSetState(EMC_TASK_STATE state)
 	// turn the machine servos off-- go into READY state
     for (t = 0; t < emcStatus->motion.traj.spindles; t++)  emcSpindleAbort(t);
 	emcTrajDisable();
-	emcIoAbort(EMC_ABORT_TASK_STATE_OFF);
+	emcIoAbort(EMC_ABORT::TASK_STATE_OFF);
     emcCoolantFloodOff();//TODO: race here
 	emcTaskAbort();
     emcJointUnhome(-2); // only those joints which are volatile_home
-	emcAbortCleanup(EMC_ABORT_TASK_STATE_OFF);
+	emcAbortCleanup(EMC_ABORT::TASK_STATE_OFF);
 	emcTaskPlanSynch();
 	break;
 
@@ -345,9 +341,9 @@ int emcTaskSetState(EMC_TASK_STATE state)
 	emcAuxEstopOff();
 	emcCoolantFloodOff();//TODO: race here
 	emcTaskAbort();
-        emcIoAbort(EMC_ABORT_TASK_STATE_ESTOP_RESET);
+        emcIoAbort(EMC_ABORT::TASK_STATE_ESTOP_RESET);
     for (t = 0; t < emcStatus->motion.traj.spindles; t++) emcSpindleAbort(t);
-	emcAbortCleanup(EMC_ABORT_TASK_STATE_ESTOP_RESET);
+	emcAbortCleanup(EMC_ABORT::TASK_STATE_ESTOP_RESET);
 	emcTaskPlanSynch();
 	break;
 
@@ -359,10 +355,10 @@ int emcTaskSetState(EMC_TASK_STATE state)
 	emcTrajDisable();
     emcCoolantFloodOff();//TODO: race here
 	emcTaskAbort();
-        emcIoAbort(EMC_ABORT_TASK_STATE_ESTOP);
+        emcIoAbort(EMC_ABORT::TASK_STATE_ESTOP);
 	for (t = 0; t < emcStatus->motion.traj.spindles; t++) emcSpindleAbort(t);
         emcJointUnhome(-2); // only those joints which are volatile_home
-	emcAbortCleanup(EMC_ABORT_TASK_STATE_ESTOP);
+	emcAbortCleanup(EMC_ABORT::TASK_STATE_ESTOP);
 	emcTaskPlanSynch();
 	break;
 
@@ -435,13 +431,13 @@ int emcTaskPlanInit()
 {
     if(!pinterp) {
 	IniFile inifile;
-	const char *inistring;
+	std::optional<const char*> inistring;
 	inifile.Open(emc_inifile);
 	if((inistring = inifile.Find("INTERPRETER", "TASK"))) {
-	    pinterp = interp_from_shlib(inistring);
+	    pinterp = interp_from_shlib(*inistring);
 	    fprintf(stderr, "interp_from_shlib() -> %p\n", pinterp);
             if (!pinterp) {
-                fprintf(stderr, "failed to load [TASK]INTERPRETER (%s)\n", inistring);
+                fprintf(stderr, "failed to load [TASK]INTERPRETER (%s)\n", *inistring);
                 return -1;
             }
 	}
@@ -696,8 +692,8 @@ int emcTaskUpdate(EMC_TASK_STAT * stat)
     if(oldstate == EMC_TASK_STATE::ON && oldstate != stat->state) {
 	emcTaskAbort();
     for (int s = 0; s < emcStatus->motion.traj.spindles; s++) emcSpindleAbort(s);
-        emcIoAbort(EMC_ABORT_TASK_STATE_NOT_ON);
-	emcAbortCleanup(EMC_ABORT_TASK_STATE_NOT_ON);
+        emcIoAbort(EMC_ABORT::TASK_STATE_NOT_ON);
+        emcAbortCleanup(EMC_ABORT::TASK_STATE_NOT_ON);
     }
 
     // execState set in main
@@ -720,6 +716,10 @@ int emcTaskUpdate(EMC_TASK_STAT * stat)
 					&stat->activeMCodes[0],
 					&stat->activeSettings[0],
 					emcStatus->motion.traj.tag);
+	if (res_state != INTERP_ERROR) {
+            rtapi_strxcpy(stat->file, emcStatus->motion.traj.tag.filename);
+        //    stat->currentLine = emcStatus->motion.traj.tag.fields[0];
+	}
     } 
     // If we get an error from trying to unpack from the motion state, always
     // use interp's internal state, so the active state is never out of date
@@ -739,9 +739,9 @@ int emcTaskUpdate(EMC_TASK_STAT * stat)
     return 0;
 }
 
-int emcAbortCleanup(int reason, const char *message)
+int emcAbortCleanup(EMC_ABORT reason, const char *message)
 {
-    int status = interp.on_abort(reason,message);
+    int status = interp.on_abort((int)reason,message);
     if (status > INTERP_MIN_ERROR)
 	print_interp_error(status);
     return status;

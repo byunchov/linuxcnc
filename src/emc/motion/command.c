@@ -369,6 +369,7 @@ STATIC int is_feed_type(int motion_type)
         return 1;
     default:
         rtapi_print_msg(RTAPI_MSG_ERR, "Internal error: unhandled motion type %d\n", motion_type);
+        /* Fallthrough */
     case EMC_MOTION_TYPE_TOOLCHANGE:
     case EMC_MOTION_TYPE_TRAVERSE:
     case EMC_MOTION_TYPE_INDEXROTARY:
@@ -1589,12 +1590,14 @@ void emcmotCommandHandler_locked(void *arg, long servo_period)
 	        emcmotStatus->spindle_status[n].speed = emcmotCommand->vel;
 	        emcmotStatus->spindle_status[n].css_factor = emcmotCommand->ini_maxvel;
 	        emcmotStatus->spindle_status[n].xoffset = emcmotCommand->acc;
-	        if (emcmotCommand->vel >= 0) {
-		    emcmotStatus->spindle_status[n].direction = 1;
-	        } else {
-		    emcmotStatus->spindle_status[n].direction = -1;
-	        }
-	        emcmotStatus->spindle_status[n].brake = 0; //disengage brake
+            if (emcmotCommand->state) {
+	            if (emcmotCommand->vel >= 0) {
+		        emcmotStatus->spindle_status[n].direction = 1;
+	            } else {
+		        emcmotStatus->spindle_status[n].direction = -1;
+	            }
+	            emcmotStatus->spindle_status[n].brake = 0; //disengage brake
+            }
             apply_spindle_limits(&emcmotStatus->spindle_status[n]);
         }
         emcmotStatus->atspeed_next_feed = emcmotCommand->wait_for_spindle_at_speed;

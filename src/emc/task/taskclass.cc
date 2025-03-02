@@ -91,7 +91,7 @@ EMC_IO_STAT *emcIoStatus = 0;
 // glue
 
 int emcIoInit() { return task_methods->emcIoInit(); }
-int emcIoAbort(int reason) { return task_methods->emcIoAbort(reason); }
+int emcIoAbort(EMC_ABORT reason) { return task_methods->emcIoAbort(reason); }
 int emcAuxEstopOn()  { return task_methods->emcAuxEstopOn(); }
 int emcAuxEstopOff() { return task_methods->emcAuxEstopOff(); }
 int emcCoolantMistOn() { return task_methods->emcCoolantMistOn(); }
@@ -102,13 +102,13 @@ int emcToolPrepare(int tool) { return task_methods->emcToolPrepare(tool); }
 int emcToolLoad() { return task_methods->emcToolLoad(); }
 int emcToolUnload()  { return task_methods->emcToolUnload(); }
 int emcToolLoadToolTable(const char *file) { return task_methods->emcToolLoadToolTable(file); }
-int emcToolSetOffset(int pocket, int toolno, EmcPose offset, double diameter,
+int emcToolSetOffset(int pocket, int toolno, const EmcPose& offset, double diameter,
                      double frontangle, double backangle, int orientation) {
     return task_methods->emcToolSetOffset( pocket,  toolno,  offset,  diameter,
 					   frontangle,  backangle,  orientation); }
 int emcToolSetNumber(int number) { return task_methods->emcToolSetNumber(number); }
 
-int emcTaskOnce(const char *filename, EMC_IO_STAT &emcioStatus)
+int emcTaskOnce(const char * /*filename*/, EMC_IO_STAT &emcioStatus)
 {
 	task_methods = new Task(emcioStatus);
     if (int res = task_methods->iocontrol_hal_init()) {
@@ -130,21 +130,22 @@ struct _inittab builtin_modules[] = {
 Task::Task(EMC_IO_STAT & emcioStatus_in) :
     emcioStatus(emcioStatus_in),
     iocontrol("iocontrol.0"),
-    ini_filename(emc_inifile)
+    ini_filename(emc_inifile),
+    tool_status(0)
     {
 
     IniFile inifile;
 
     if (inifile.Open(ini_filename)) {
         inifile.Find(&random_toolchanger, "RANDOM_TOOLCHANGER", "EMCIO");
-        const char *t;
-        if ((t = inifile.Find("TOOL_TABLE", "EMCIO")) != NULL)
-            tooltable_filename = strdup(t);
+        std::optional<const char*> t;
+        if ((t = inifile.Find("TOOL_TABLE", "EMCIO")))
+            tooltable_filename = strdup(*t);
 
-        if ((t = inifile.Find("DB_PROGRAM", "EMCIO")) != NULL) {
+        if ((t = inifile.Find("DB_PROGRAM", "EMCIO"))) {
             db_mode = tooldb_t::DB_ACTIVE;
             tooldata_set_db(db_mode);
-            strncpy(db_program, t, LINELEN - 1);
+            strncpy(db_program, *t, LINELEN - 1);
         }
 
         if (tooltable_filename != NULL && db_program[0] != '\0') {
@@ -205,12 +206,11 @@ Task::~Task() {};
 static int readToolChange(IniFile *toolInifile)
 {
     int retval = 0;
-    const char *inistring;
+    std::optional<const char*> inistring;
 
-    if (NULL !=
-	(inistring = toolInifile->Find("TOOL_CHANGE_POSITION", "EMCIO"))) {
+    if ((inistring = toolInifile->Find("TOOL_CHANGE_POSITION", "EMCIO"))) {
 	/* found an entry */
-        if (9 == sscanf(inistring, "%lf %lf %lf %lf %lf %lf %lf %lf %lf",
+        if (9 == sscanf(*inistring, "%lf %lf %lf %lf %lf %lf %lf %lf %lf",
                         &tool_change_position.tran.x,
                         &tool_change_position.tran.y,
                         &tool_change_position.tran.z,
@@ -222,7 +222,7 @@ static int readToolChange(IniFile *toolInifile)
                         &tool_change_position.w)) {
             have_tool_change_position=9;
             retval=0;
-        } else if (6 == sscanf(inistring, "%lf %lf %lf %lf %lf %lf",
+        } else if (6 == sscanf(*inistring, "%lf %lf %lf %lf %lf %lf",
                         &tool_change_position.tran.x,
                         &tool_change_position.tran.y,
                         &tool_change_position.tran.z,
@@ -234,7 +234,7 @@ static int readToolChange(IniFile *toolInifile)
 	    tool_change_position.w = 0.0;
             have_tool_change_position = 6;
             retval = 0;
-        } else if (3 == sscanf(inistring, "%lf %lf %lf",
+        } else if (3 == sscanf(*inistring, "%lf %lf %lf",
                                &tool_change_position.tran.x,
                                &tool_change_position.tran.y,
                                &tool_change_position.tran.z)) {
@@ -357,7 +357,7 @@ int Task::emcIoInit()//EMC_TOOL_INIT
     return 0;
 }
 
-int Task::emcIoAbort(int reason)//EMC_TOOL_ABORT_TYPE
+int Task::emcIoAbort(EMC_ABORT /*reason*/)//EMC_TOOL_ABORT_TYPE
 {
     // only used in v2
     // this gets sent on any Task Abort, so it might be safer to stop
@@ -520,7 +520,7 @@ int Task::emcToolLoadToolTable(const char *file)//EMC_TOOL_LOAD_TOOL_TABLE_TYPE
     return 0;
 }
 
-int Task::emcToolSetOffset(int idx, int toolno, EmcPose offset, double diameter,
+int Task::emcToolSetOffset(int idx, int toolno, const EmcPose& offset, double diameter,
                      double frontangle, double backangle, int orientation)//EMC_TOOL_SET_OFFSET
 {
 

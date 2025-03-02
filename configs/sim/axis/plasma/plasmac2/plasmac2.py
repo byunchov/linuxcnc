@@ -17,12 +17,46 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 '''
 
-VER = '13'
+VER = '21'
 
 ##############################################################################
 # the next line suppresses undefined variable errors in VSCode               #
 # pyright: reportUndefinedVariable = false
 ##############################################################################
+
+
+##############################################################################
+# UPDATES                                                                    #
+##############################################################################
+def update_check():
+    ''' check for updates - the newest update must be added last here '''
+    # v15 (2024 Jan 30) set user_m_path to include <plasmac2/lib>
+    path = 'plasmac2/lib'
+    mPath = inifile.find('RS274NGC', 'USER_M_PATH')
+    if path not in mPath:
+        version = 'v15'
+        try:
+            if os.path.isfile(os.path.join(configPath, 'M190')):
+                os.rename(os.path.join(configPath, 'M190'), os.path.join(configPath, 'M190.bak'))
+            tmpFile = f'{s.ini_filename}~'
+            COPY(s.ini_filename, tmpFile)
+            with open(tmpFile, 'r') as inFile:
+                with open(s.ini_filename, 'w') as outFile:
+                    for line in inFile:
+                        if line.startswith('USER_M_PATH'):
+                            line = line.replace(mPath, f'./:{path}')
+                        outFile.write(line)
+            if os.path.isfile(tmpFile):
+                os.remove(tmpFile)
+        except Exception as e:
+            title = 'error'
+            msg0 = f"Update to {version} failed due to:\n\n{e}"
+            notifications.add('error', f"{msg0}\n")
+        else:
+            title = 'info'
+            msg0 = f"Updated successfully to {version}\nA restart is required"
+        notifications.add(title, f"{msg0}\n")
+
 
 ##############################################################################
 # NEW CLASSES                                                                #
@@ -96,7 +130,9 @@ class plasmacPopUp(Tkinter.Toplevel):
         ttl = Tkinter.Label(self.frm, text=title, fg=colorBack, bg=colorFore)
         ttl.pack(fill='x')
         b1Text = b2Text = b3Text = b4Text = None
-        if func == 'rfl':
+        if func == 'rfl_type':
+            b1Text, b2Text = self.popup_rfl_type(func)
+        elif func == 'rfl':
             b1Text, b2Text = self.popup_run_from_line(func)
         elif func == 'sc':
             b1Text, b2Text = self.popup_single_cut(func)
@@ -128,6 +164,16 @@ class plasmacPopUp(Tkinter.Toplevel):
             vkbData['required'] = True
             vkb_show(vkb)
         root_window.wait_window(self)
+
+    def popup_rfl_type(self, func):
+        self.rflType = Tkinter.StringVar(self, 'run')
+        f1 = Tkinter.Frame(self.frm, bg=colorBack)
+        run = Tkinter.Radiobutton(f1, text=_('Here to end'), variable=self.rflType, value='run', width=12, bg=colorBack, highlightthickness=0, anchor='w')
+        cut = Tkinter.Radiobutton(f1, text=_('This cutpath'), variable=self.rflType, value='cut', width=12, bg=colorBack, highlightthickness=0, anchor='w')
+        run.pack(anchor='w')
+        cut.pack(anchor='w')
+        f1.pack(padx=4, pady=4, anchor='w')
+        return _('OK'), _('Cancel')
 
     def popup_run_from_line(self, func):
         self.leadIn = Tkinter.BooleanVar()
@@ -218,7 +264,9 @@ class plasmacPopUp(Tkinter.Toplevel):
             return _('OK'), _('Cancel')
 
     def popup_complete(self, value, func):
-        if func == 'rfl':
+        if func == 'rfl_type':
+            self.reply = value, self.rflType.get()
+        elif func == 'rfl':
             self.reply = value, self.leadIn.get(), float(self.leadLength.get()), float(self.leadAngle.get())
         elif func == 'sc':
             self.reply = value, self.xLength.get(), self.yLength.get()
@@ -641,12 +689,13 @@ def conv_toggle(state, convSent=False):
             CONV = conversational.Conv(convFirstRun, root_window, widgets.toolFrame, \
                    widgets.convFrame, bwidget.ComboBox, imagePath, tmpPath, pVars, \
                    unitsPerMm, comp, PREF, getPrefs, putPrefs, open_file_guts, \
-                   wcs_rotation, conv_toggle, color_change, plasmacPopUp)
+                   wcs_rotation, conv_toggle, color_change, plasmacPopUp, o)
             convFirstRun = False
-        set_conv_preview()
+        # set_conv_preview()
         if loaded_file:
             COPY(loaded_file, preConvFile)
         CONV.start(materialFileDict, matIndex, vars.taskfile.get(), s.g5x_index, commands.set_view_z)
+        set_conv_preview()
         keyboard_bindings(False)
         vkbData['required'] = True
         vkb_show('numpad')
@@ -675,6 +724,7 @@ def conv_toggle(state, convSent=False):
             commands.set_view_t()
         else:
             commands.set_view_z()
+        CONV.oldConvButton = 'line'
 
 def clear_program():
     file = os.path.join(tmpPath, 'clear.ngc')
@@ -686,7 +736,8 @@ def clear_program():
     t.configure(state='disabled')
 
 def set_conv_preview():
-    global convViewOptions
+    ''' configure the preview for conversational '''
+    global convViewOptions, joint_dro_format_old , dro_format_old
     convViewOptions['alpha'] = vars.program_alpha.get()
     convViewOptions['dtg'] = vars.show_distance_to_go.get()
     convViewOptions['extents'] = vars.show_extents.get()
@@ -709,10 +760,16 @@ def set_conv_preview():
     vars.show_tool.set(False)
     o.cone_basesize = .025
     o.show_small_origin = False
-    o.enable_dro = False
+    o.hide_icons = True
     o.set_view_z()
+    joint_dro_format_old = o.joint_dro_format
+    o.joint_dro_format = joint_dro_format_new
+    dro_format_old = o.dro_format
+    o.dro_format = dro_format_new
+
 
 def reset_conv_preview():
+    ''' configure the preview for gcode file '''
     global convViewOptions
     vars.program_alpha.set(convViewOptions['alpha'])
     vars.show_distance_to_go.set(convViewOptions['dtg'])
@@ -725,7 +782,27 @@ def reset_conv_preview():
     vars.show_tool.set(convViewOptions['tool'])
     o.cone_basesize = convViewOptions['cone']
     o.show_small_origin = convViewOptions['origin']
-    o.enable_dro = True
+    o.joint_dro_format = joint_dro_format_old
+    o.dro_format = dro_format_old
+    o.hide_icons = False
+
+def joint_dro_format_new(s,spd,num_of_joints,limit, homed):
+    ''' replace dro with selected material '''
+    text = conv_material_text()
+    return limit, homed, text, text
+
+def dro_format_new(s,spd,dtg,limit,homed,positions,axisdtg,g5x_offset,g92_offset,tlo_offset):
+    ''' replace dro with selected material '''
+    text = conv_material_text()
+    return limit, homed, text, text
+
+def conv_material_text():
+    ''' return a list of material parameters to display '''
+    res = 3 if s.linear_units != 1 else 2
+    text  = f"Cut Speed={materialFileDict[int(CONV.matCombo.get().split(':')[0])]['cut_speed']:.0f}"
+    text += f"   Cut Height={materialFileDict[int(CONV.matCombo.get().split(':')[0])]['cut_height']:.{res}f}"
+    text += f"   Kerf Width={materialFileDict[int(CONV.matCombo.get().split(':')[0])]['kerf_width']:.{res}f}"
+    return [text]
 
 def hide_default():
     rE('grid forget .pane')
@@ -760,7 +837,7 @@ def enable_menus(state):
 # TABLE VIEW FUNCTIONS                                                       #
 ##############################################################################
 def set_view_t(event=None, scale=None):
-    zoomScale = scale if scale else float(rE(f"{fsetup}.l.gui.zoom get"))
+    # set button states
     widgets.view_z.configure(relief='link')
     widgets.view_z2.configure(relief='link')
     widgets.view_x.configure(relief='link')
@@ -769,17 +846,19 @@ def set_view_t(event=None, scale=None):
     widgets.view_t.configure(relief='sunken')
     widgets.view_p.configure(relief='link')
     vars.view_type.set(5)
-    mult = 1/25.4 if s.linear_units == 1 else 1
-    xLen = machineBounds['xLen'] * mult
-    yLen = machineBounds['yLen'] * mult
-    size = [xLen / zoomScale * 0.5, yLen / zoomScale * 0.5, 0]
-    mid = [xLen * 0.5, yLen * 0.5, 0]
+    # set view
+    mult = 1 if s.linear_units != 1 else 25.4
+    zoomScale = scale * 2 if scale else float(rE(f"{fsetup}.l.gui.zoom get")) * 2
+    xTableLength = machineBounds['xLen'] / mult / zoomScale
+    yTableLength = machineBounds['yLen'] / mult / zoomScale
+    xTableCenter = (machineBounds['X-'] + (machineBounds['xLen'] / 2)) / mult
+    yTableCenter = (machineBounds['Y-'] + (machineBounds['yLen'] / 2)) / mult
     o.reset()
-    glTranslatef(-mid[0], -mid[1], -mid[2])
-    o.set_eyepoint_from_extents(size[0], size[1])
+    glTranslatef(-xTableCenter, -yTableCenter, 0)
+    o.set_eyepoint_from_extents(xTableLength, yTableLength)
     o.perspective = False
     o.lat = o.lon = 0
-    glRotateScene(o, 1.0, mid[0], mid[1], mid[2], 0, 0, 0, 0)
+    glRotateScene(o, 1.0, xTableCenter, yTableCenter, 0, 0, 0, 0, 0)
     o._redraw()
 
 def get_view_type():
@@ -1195,7 +1274,7 @@ def backup_clicked():
     plasmacPopUp('info', title, f"{msg0}\n\n{msg1}: {outName}\n\n{msg2}\n")
 
 def torch_enable():
-    hal.set_p('plasmac.torch-enable',str(not hal.get_value('plasmac.torch-enable')))
+    hal.set_p('plasmac.torch-enable', str(not hal.get_value('plasmac.torch-enable')))
     color_torch()
 
 def update_preview(clear=False):
@@ -1261,6 +1340,12 @@ def manual_cut(event):
     global manualCut
     if manual_ok():
         if not hal.get_value('spindle.0.on'):
+            if not critical_button_check():
+                return
+            msg = bounds_check_probe(True)
+            if msg:
+                notifications.add('error', msg)
+                return
             c.spindle(linuxcnc.SPINDLE_FORWARD, 1)
             manualCut['feed'] = vars.jog_speed.get()
             vars.jog_speed.set(int(rE(f"{fruns}.material.cut-feed-rate get")))
@@ -1462,38 +1547,29 @@ def sheet_align(mode, buttonState, offsetX, offsetY):
 ##############################################################################
 # FRAMING FUNCTIONS                                                          #
 ##############################################################################
-def frame_error(torch, msgList, units, xMin, yMin, xMax, yMax):
+def frame_error(torch, msgList):
     title = _('AXIS LIMIT ERROR')
-    msg = []
-    msgs = ''
-    msg1 = '' if torch else _('due to laser offset')
-    for n in range(0, len(msgList)):
-        msg.append(f"{msgList[n][0]} ")
-        if msgList[n][1] == 'MAX':
-            msg[n] += _('move would exceed the maximum limit by')
-        else:
-            msg[n] += _('move would exceed the minimum limit by')
-        msg[n] += f" {msgList[n][2]}{units} {msg1}\n\n"
-        msgs += msg[n]
     if not torch:
-        msgs += _('Do you want to try with the torch?')
-        reply = plasmacPopUp('yesno', title, msgs).reply
+        msgList += '\n'
+        msgList += _('Do you want to try with the torch?')
+        reply = plasmacPopUp('yesno', title, msgList).reply
     else:
-        msgs += _('Framing cannot proceed')
-        reply = plasmacPopUp('error', title, msgs).reply
+        msgList += '\n'
+        msgList += _('Framing cannot proceed')
+        reply = plasmacPopUp('error', title, msgList).reply
     return reply
 
 def frame_job(feed, height):
     global framingState, activeFunction
     if o.canon:
-        msgList, units, xMin, yMin, xMax, yMax, frame_points = bounds_check('framing', laserOffsets['X'], laserOffsets['Y'])
+        msgList, frame_points = bounds_check_framing(laserOffsets['X'], laserOffsets['Y'], True)
         if msgList:
-            reply = frame_error(False, msgList, units, xMin, yMin, xMax, yMax)
+            reply = frame_error(False, msgList)
             if not reply:
                 return
-            msgList, units, xMin, yMin, xMax, yMax, frame_points = bounds_check('framing', 0, 0)
+            msgList, frame_points = bounds_check_framing()
             if msgList:
-                reply = frame_error(True, msgList, units, xMin, yMin, xMax, yMax)
+                reply = frame_error(True, msgList)
                 return
         if s.interp_state == linuxcnc.INTERP_IDLE:
             activeFunction = True
@@ -1545,66 +1621,94 @@ def rotate_frame(coordinates):
     return frame_points, xMin, yMin, xMax, yMax
 
 ##############################################################################
-# BOUNDS CHECK                                                               #
+# BOUNDS CHECKS                                                              #
 ##############################################################################
-def bounds_check(boundsType, xOffset , yOffset):
-    global machineBounds
-    # glcanon reports in dinosaur units (imperial), so we need to:
-    #   test the bounds in machine units
-    #   report the error in currently displayed units
-    framing = True if 'framing' in boundsType else False
-    boundsMultiplier = 25.4 if s.linear_units == 1 else 1
-    if o.canon:
-        gcUnits = 'mm' if 210 in o.canon.state.gcodes else 'in'
-        if framing:
-            xStart = s.g5x_offset[0]
-            yStart = s.g5x_offset[1]
-            xMin = (round(o.canon.min_extents_zero_rxy[0] * boundsMultiplier + xOffset, 5))
-            xMax = (round(o.canon.max_extents_zero_rxy[0] * boundsMultiplier + xOffset, 5))
-            yMin = (round(o.canon.min_extents_zero_rxy[1] * boundsMultiplier + yOffset, 5))
-            yMax = (round(o.canon.max_extents_zero_rxy[1] * boundsMultiplier + yOffset, 5))
-            coordinates = [[xStart, yStart], [xMin, yMin], [xMin, yMax], [xMax, yMax], [xMax, yMin]]
-            frame_points, xMin, yMin, xMax, yMax = rotate_frame(coordinates)
-        else:
-            xMin = (round(o.canon.min_extents[0] * boundsMultiplier + xOffset, 5))
-            xMax = (round(o.canon.max_extents[0] * boundsMultiplier + xOffset, 5))
-            yMin = (round(o.canon.min_extents[1] * boundsMultiplier + yOffset, 5))
-            yMax = (round(o.canon.max_extents[1] * boundsMultiplier + yOffset, 5))
-    else:
-        gcUnits = 'mm' if s.linear_units == 1 else 'in'
-        xMin = xMax = xOffset
-        yMin = yMax = yOffset
-    if s.linear_units == 1 and gcUnits == 'in':
-        reportMultiplier = 0.03937
-    elif s.linear_units != 1 and gcUnits == 'mm':
-        reportMultiplier = 25.4
-    else:
-        reportMultiplier = 1
-    msgList = []
-    if xMin < machineBounds['X-']:
-        amount = (machineBounds['X-'] - xMin) * reportMultiplier
-        msgList.append(['X','MIN',f"{amount:0.2f}"])
-    if xMax > machineBounds['X+']:
-        amount = (xMax - machineBounds['X+']) * reportMultiplier
-        msgList.append(['X','MAX',f"{amount:0.2f}"])
-    if yMin < machineBounds['Y-']:
-        amount = (machineBounds['Y-'] - yMin) * reportMultiplier
-        msgList.append(['Y','MIN',f"{amount:0.2f}"])
-    if yMax > machineBounds['Y+']:
-        amount = (yMax - machineBounds['Y+']) * reportMultiplier
-        msgList.append(['Y','MAX',f"{amount:0.2f}"])
-    if framing:
-        return msgList, gcUnits, xMin, yMin, xMax, yMax, frame_points
-    else:
-        return msgList, gcUnits, xMin, yMin, xMax, yMax
+def bounds_check_file():
+    msg = _('G-code')
+    # canon units are always returned as imperial
+    # ensure returned units are in machine units
+    unitsMultiplier = 25.4 if s.linear_units == 1 else 1
+    xMin = (o.canon.min_extents[0] * unitsMultiplier)
+    xMax = (o.canon.max_extents[0] * unitsMultiplier)
+    yMin = (o.canon.min_extents[1] * unitsMultiplier)
+    yMax = (o.canon.max_extents[1] * unitsMultiplier)
+    errMsg = bounds_compare(xMin, xMax, yMin, yMax, msg)
+    return errMsg
 
+def bounds_check_probe(local):
+    msg = _('Move to probe offset')
+    xPierceOffset = yPierceOffset = xMinP = xMaxP = yMinP = yMaxP = 0
+    if local:
+        xMinP = xMaxP = s.position[0] + probeOffsets['X']
+        yMinP = yMaxP = s.position[1] + probeOffsets['Y']
+    elif any((comp['x_min_pierce_extent'], comp['x_max_pierce_extent'], \
+              comp['y_min_pierce_extent'], comp['y_max_pierce_extent'])):
+        if comp['cut-type']:
+            #TODO PHILL - Do you want this from the GUI or HAL??
+            xPierceOffset = comp['x-pierce-offset']
+            yPierceOffset = comp['y-pierce-offset']
+        if s.linear_units == 1 and not vars.metric.get():
+            unitsMultiplier = 25.4
+        elif s.linear_units != 1 and vars.metric.get():
+            unitsMultiplier = 1 / 25.4
+        else:
+            unitsMultiplier = 1
+        xMinP = comp['x_min_pierce_extent'] * unitsMultiplier + probeOffsets['X'] + s.g5x_offset[0] + xPierceOffset
+        xMaxP = comp['x_max_pierce_extent'] * unitsMultiplier + probeOffsets['X'] + s.g5x_offset[0] + xPierceOffset
+        yMinP = comp['y_min_pierce_extent'] * unitsMultiplier + probeOffsets['Y'] + s.g5x_offset[1] + yPierceOffset
+        yMaxP = comp['y_max_pierce_extent'] * unitsMultiplier + probeOffsets['Y'] + s.g5x_offset[1] + yPierceOffset
+    errMsg = bounds_compare(xMinP, xMaxP, yMinP, yMaxP, msg)
+    return errMsg
+
+def bounds_check_framing(xOffset=0, yOffset=0, laser=False):
+    msg = _('Framing move')
+    if laser:
+        msg1 = _('due to laser offset')
+    else:
+        msg1 = ''
+    # canon units are always returned as imperial
+    # ensure returned units are in machine units
+    unitsMultiplier = 25.4 if s.linear_units == 1 else 1
+    xMin = (o.canon.min_extents_zero_rxy[0] * unitsMultiplier + xOffset)
+    xMax = (o.canon.max_extents_zero_rxy[0] * unitsMultiplier + xOffset)
+    yMin = (o.canon.min_extents_zero_rxy[1] * unitsMultiplier + yOffset)
+    yMax = (o.canon.max_extents_zero_rxy[1] * unitsMultiplier + yOffset)
+    coordinates = [[s.g5x_offset[0], s.g5x_offset[1]], [xMin, yMin], [xMin, yMax], [xMax, yMax], [xMax, yMin]]
+    frame_points, xMin, yMin, xMax, yMax = rotate_frame(coordinates)
+    errMsg = bounds_compare(xMin, xMax, yMin, yMax, msg, msg1)
+    return (errMsg, frame_points)
+
+def bounds_compare(xMin, xMax, yMin, yMax, msg, msg1=''):
+    global machineBounds
+    errMsg = ''
+    epsilon = 1e-4
+    txtxMin = _('exceeds the X minimum limit by')
+    txtxMax = _('exceeds the X maximum limit by')
+    txtyMin = _('exceeds the Y minimum limit by')
+    txtyMax = _('exceeds the Y maximum limit by')
+    lessThan = _('less than')
+    if xMin < machineBounds['X-']:
+        errMsg += f'{msg} {txtxMin} {lessThan} {epsilon} {unitSuffix} {msg1}\n' if (machineBounds['X-'] - xMin) < epsilon \
+            else f'{msg} {txtxMin} {machineBounds["X-"] - xMin:0.4f} {unitSuffix} {msg1}\n'
+    if xMax > machineBounds['X+']:
+        errMsg += f'{msg} {txtxMax} {lessThan} {epsilon} {unitSuffix} {msg1}\n' if (xMax - machineBounds['X+']) < epsilon \
+            else f'{msg} {txtxMax} {xMax - machineBounds["X+"]:0.4f} {unitSuffix} {msg1}\n'
+    if yMin < machineBounds['Y-']:
+        errMsg += f'{msg} {txtyMin} {lessThan} {epsilon} {unitSuffix} {msg1}\n' if (machineBounds['Y-'] - yMin) < epsilon \
+            else f'{msg} {txtyMin} {machineBounds["Y-"] - yMin:0.4f} {unitSuffix} {msg1}\n'
+    if yMax > machineBounds['Y+']:
+        errMsg += f'{msg} {txtyMax} {lessThan} {epsilon} {unitSuffix} {msg1}\n' if (yMax - machineBounds['Y+']) < epsilon \
+            else f'{msg} {txtyMax} {yMax - machineBounds["Y+"]:0.4f} {unitSuffix} {msg1}\n'
+    return errMsg
 
 ##############################################################################
 # PERIPHERAL OFFSET FUNCTIONS                                                #
 ##############################################################################
-offsets_text = []
-offsets_text.append(_('1. Jog until the peripheral is centered on the mark'))
-offsets_text.append(_('2. Click the Yes button to get the offsets'))
+def offsets_text():
+    text = []
+    text.append(_('1. Jog until the peripheral is centered on the mark'))
+    text.append(_('2. Click the Yes button to get the offsets'))
+    return text
 
 def set_peripheral_offsets():
     toolFile = os.path.realpath(tooltable)
@@ -1638,7 +1742,7 @@ def offsets_show(toolFile):
     return True
 
 def offsets_laser_clicked():
-    reply = plasmacPopUp('yesno', _('SET LASER OFFSETS'), ' \n'.join(offsets_text)).reply
+    reply = plasmacPopUp('yesno', _('SET LASER OFFSETS'), ' \n'.join(offsets_text())).reply
     if not reply:
         comp['laser-on'] = False
         return
@@ -1677,7 +1781,7 @@ def offsets_scribe_clicked(toolFile):
         msg = _('Could not get current scribe offsets from tooltable')
         plasmacPopUp('info', title, msg)
         return
-    reply = plasmacPopUp('yesno', _('SET SCRIBE OFFSETS'), ' \n'.join(offsets_text)).reply
+    reply = plasmacPopUp('yesno', _('SET SCRIBE OFFSETS'), ' \n'.join(offsets_text())).reply
     if not reply:
         comp['offset-set-scribe'] = False
         return
@@ -1695,7 +1799,7 @@ def offsets_scribe_clicked(toolFile):
     comp['offset-set-scribe'] = False
 
 def offsets_probe_clicked():
-    reply = plasmacPopUp('yesno', _('SET PROBE OFFSETS'), ' \n'.join(offsets_text)).reply
+    reply = plasmacPopUp('yesno', _('SET PROBE OFFSETS'), ' \n'.join(offsets_text())).reply
     if not reply:
         comp['offset-set-probe'] = False
         return
@@ -1971,25 +2075,52 @@ def reload_file(refilter=True):
         f = os.path.join(tmpPath, 'shape.ngc')
     else:
         f = loaded_file
-    if refilter or not get_filter(f):
-        open_file_guts(f, False, False)
+    if refilter or not get_filter(loaded_file):
+        # we copy the file to a temporary file so that even if it subsequently
+        # changes on disk, LinuxCNC is parsing the file contents from the time
+        # the user opened the file
+        tempfile = os.path.join(tempdir, os.path.basename(loaded_file))
+        if loaded_file != tempfile:
+            shutil.copyfile(loaded_file, tempfile)
+        open_file_guts(tempfile, False, False)
     else:
-        tempfile = os.path.join(tempdir, os.path.basename(f))
+        tempfile = os.path.join(tempdir, "filtered-" + os.path.basename(loaded_file))
         open_file_guts(tempfile, True, False)
+    msg = bounds_check_file()
+    msg += bounds_check_probe(False)
+    if msg:
+        notifications.add('error', msg)
     commands.set_view_z()
     if line:
         o.set_highlight_line(line)
     live_plotter.clear()
 
 def task_run(*event):
-    ''' check for runcritical buttons'''
-    for button in togglePins:
-        if togglePins[button]['runcritical'] and not togglePins[button]['state']:
-            msg0 = _('Cannot run program while critical button is not active')
-            btn = rE(f"{fbuttons}.button{button} cget -text")
-            notifications.add('error', f"{msg0}: {btn}\n")
-            return
-    if run_warn(): return
+    global dryRun
+    if event and event[0]== 'dry-run' and loaded_file:
+        if laserOffsets['X'] or laserOffsets['Y']:
+            framingError = bounds_check_framing(laserOffsets['X'], laserOffsets['Y'], True)[0]
+            if framingError:
+                title = _('AXIS LIMIT ERROR')
+                plasmacPopUp('warn', title, framingError)
+                return
+            dryRun = [s.g5x_offset[0], s.g5x_offset[1]]
+            newX = s.actual_position[0] - s.g5x_offset[0] - laserOffsets['X']
+            newY = s.actual_position[1] - s.g5x_offset[1] - laserOffsets['Y']
+            units = '21' if vars.metric.get() else '20'
+            if s.linear_units == 1 and units == '20':
+                unitsMultiplier = 1 / 25.4
+            elif s.linear_units != 1 and units == '20':
+                unitsMultiplier =  25.4
+            else:
+                unitsMultiplier = 1
+            ensure_mode(linuxcnc.MODE_MDI)
+            c.mdi(f'G{units} G10 L20 P0 X{newX * unitsMultiplier} Y{newY * unitsMultiplier}')
+            c.wait_complete()
+            comp['laser-on'] = 1
+            hal.set_p('plasmac.dry-run', '1')
+    if run_warn() or not critical_button_check():
+        return
     global program_start_line, program_start_line_last
     program_start_line_last = program_start_line;
     ensure_mode(linuxcnc.MODE_AUTO)
@@ -2010,9 +2141,46 @@ def task_run_line():
         rflIn = loaded_file
     if comp['development']:
         reload(RFL)
-    setup = RFL.run_from_line_get(rflIn, pVars.startLine.get())
-    # cannot do run from line within a subroutine or if using cutter compensation
+    # get rfl type
+    rfl = {}
+    title = _('RUN FROM LINE')
+    valid, type_ = plasmacPopUp('rfl_type', title, None, 'numpad').reply
+    vkbData['required'] = False
+    if not valid:
+        pVars.rflActive = False
+        pVars.startLine.set(0)
+        return
+    lastLine = 0
+    # get start and end of cutpath
+    if type_ == 'cut':
+        count = 0
+        start = 0
+        with open(rflIn, 'r') as inFile:
+            for line in inFile:
+                line = line.strip()
+                if line[:3] == 'G00':
+                    start = count
+                if line[:3] == 'M05' and count > pVars.startLine.get():
+                    break
+                count += 1
+        lastLine = count
+        pVars.startLine.set(start)
+        rfl['do'] = False
+        rfl['length'] = 0.0
+        rfl['angle'] = 0.0
+    # get leadin parameters
+    else:
+        valid, rfl['do'], rfl['length'], rfl['angle'] = plasmacPopUp('rfl', title, None, 'numpad').reply
+        vkbData['required'] = False
+    # cancel rfl
+    if not valid:
+        pVars.rflActive = False
+        pVars.startLine.set(0)
+        return
+    # get the old data
+    setup = RFL.run_from_line_get(rflIn, pVars.startLine.get(), lastLine)
     if setup['error']:
+    # cannot do run from line within a subroutine or if using cutter compensation
         if setup['compError']:
             msg0 = _('Cannot run from line while cutter compensation is active')
             notifications.add('error', f"{msg0}\n")
@@ -2025,32 +2193,24 @@ def task_run_line():
             pVars.rflActive = False
             pVars.startLine.set(0)
     else:
-        # get user input
-        rfl = {}
-        title = _('RUN FROM LINE')
-        valid, rfl['do'], rfl['length'], rfl['angle'] = plasmacPopUp('rfl', title, None, 'numpad').reply
-        vkbData['required'] = False
-        # rfl cancel clicked
-        if not valid:
-            pVars.rflActive = False
-            pVars.startLine.set(0)
-        else:
-            # rfl load clicked
-            rflFile = os.path.join(tmpPath, 'rfl.ngc')
-            result = RFL.run_from_line_set(rflFile, setup, rfl, unitsPerMm)
-            # leadin cannot be used
-            if result['error']:
-                msg0 = _('Unable to calculate a leadin for this cut')
-                msg1 = _('Program will run from selected line with no leadin applied')
-                notifications.add('error', f"{msg0}\n{msg1}\n")
-            # load rfl file
-            if loaded_file != os.path.join(tmpPath, 'rfl.ngc'):
-                pVars.preRflFile.set(loaded_file)
-            open_file_guts(os.path.join(tmpPath, 'rfl.ngc'), False, False)
-            commands.set_view_z()
+        # set the new data
+        rflFile = os.path.join(tmpPath, 'rfl.ngc')
+        result = RFL.run_from_line_set(rflFile, setup, rfl, unitsPerMm)
+        # if leadin cannot be used
+        if result['error']:
+            msg0 = _('Unable to calculate a leadin for this cut')
+            msg1 = _('Program will run from selected line with no leadin applied')
+            notifications.add('error', f"{msg0}\n{msg1}\n")
+        # load rfl file
+        if loaded_file != os.path.join(tmpPath, 'rfl.ngc'):
+            pVars.preRflFile.set(loaded_file)
+        open_file_guts(os.path.join(tmpPath, 'rfl.ngc'), False, False)
+        commands.set_view_z()
 
 def open_file_name(f):    # from axis.py
     ''' set view to Z '''
+    global loaded_file
+    loaded_file = f
     open_file_guts(f)
     commands.set_view_z()
     if o.canon is not None:
@@ -2059,6 +2219,10 @@ def open_file_name(f):    # from axis.py
         z = (o.canon.min_extents[2] + o.canon.max_extents[2])/2
         o.set_centerpoint(x, y, z)
     live_plotter.clear()
+    msg = bounds_check_file()
+    msg += bounds_check_probe(False)
+    if msg:
+        notifications.add('error', msg)
 
 def set_view_p(event=None):    # from axis.py
     ''' add view t '''
@@ -2099,9 +2263,27 @@ def get_jog_speed(a):
 
 def send_mdi_command(command):
     ''' reload file if G10 in gcode '''
+    ''' disallow M3, M4, M5, and G92 in MDI '''
     global mdi_history_index, mdi_history_save_filename
     if command != "":
         command= command.lstrip().rstrip()
+        test = command.lower().replace(' ','')
+        if 'g92' in test and not 'g92.1' in test:
+            msg0 = _('G92 offsets are not allowed')
+            notifications.add('error', f"{msg0}\n")
+            return
+        if 'm3' in test:
+            msg0 = _('M3 commands are not allowed in MDI mode')
+            notifications.add('error', f"{msg0}\n")
+            return
+        elif 'm4' in test:
+            msg0 = _('M4 commands are not allowed in MDI mode')
+            notifications.add('error', f"{msg0}\n")
+            return
+        elif 'm5' in test:
+            msg0 = _('M5 commands are not allowed in MDI mode')
+            notifications.add('error', f"{msg0}\n")
+            return
         vars.mdi_command.set("")
         ensure_mode(linuxcnc.MODE_MDI)
         widgets.mdi_history.selection_clear(0, "end")
@@ -2145,7 +2327,7 @@ def update_title(*args):
         file = name = os.path.basename(vars.taskfile.get())
     base = f"{vars.machine.get()}    plasmac2 v{VER} + AXIS {linuxcnc.version}"
     rE(f"wm title {root_window} {{{base}    ({file})}}")
-    rE(f"wm iconname {root_window} {name}")
+    rE(f"wm iconname {root_window} {{{name}}}")
 
 def update_jog_slider_vel(value):
     ''' inhibit slider update if manual cut is active
@@ -2211,6 +2393,24 @@ def prompt_touchoff(title, text, default, tool_only, system=None):
 ##############################################################################
 # USER BUTTON FUNCTIONS                                                      #
 ##############################################################################
+def critical_button_check():
+    valid = True
+    if hal.get_value('plasmac.torch-enable'):
+        buttons = ''
+        btnText = _('button is')
+        for button in criticalButtons:
+            if togglePins[str(button)]['runcritical'] and not togglePins[str(button)]['state']:
+                if buttons:
+                    buttons += ', '
+                    btnText = _('buttons are')
+                buttons += rE(f"{fbuttons}.button{str(button)} cget -text")
+                valid = False
+        if not valid:
+            msg0 = _('not activated')
+            msg1 = _('Continue the cut?')
+            valid = plasmacPopUp('yesno', _('CRITICAL BUTTON'), f'{buttons} {btnText} {msg0}\n\n{msg1}').reply
+    return valid
+
 def validate_hal_pin(halpin, button, usage):
     valid = pBit = False
     for pin in halPinList:
@@ -2344,7 +2544,7 @@ def user_button_setup():
                 if outCode['X'] is None and outCode['Y'] is None:
                     outCode['code'] = None
                 else:
-                    buff = 10 * hal.get_value('halui.machine.units-per-mm') # keep 10mm away from machine limits
+                    buff = 10 * unitsPerMm # keep 10mm away from machine limits
                     for axis in 'XY':
                         if outCode[axis]:
                             if outCode[f"{axis}"] < machineBounds[f"{axis}-"] + buff:
@@ -2398,13 +2598,15 @@ def user_button_setup():
                     parmError = True
         elif bCode.startswith('toggle-halpin '):
             if len(bCode.split()) > 1:
-                ontext = bCode.split(';;')[1] if ';;' in bCode else ''
-                ontext = ontext if ontext else bName
+                ontext = bName
+                if ';;' in bCode:
+                    ontext = bCode.split(';;')[1] if ';;' in bCode else ''
+                    bCode = bCode[:bCode.index(';;')].strip()
                 codes = bCode.strip().split()
                 if validate_hal_pin(codes[1], n, 'toggle-halpin'):
                     outCode = {'code':'toggle-halpin', 'pin':codes[1], 'critical':False, 'ontext':ontext}
                     outCode['pin'] = codes[1]
-                    if len(codes) == 3 and codes[2] == 'runcritical':
+                    if len(codes) == 3 and (codes[2] == 'runcritical' or codes[2] == 'cutcritical'):
                         outCode['critical'] = True
                         criticalButtons.append(n)
                     togglePins[str(n)] = {'pin':outCode['pin'], 'state':hal.get_value(outCode['pin']), \
@@ -2506,6 +2708,10 @@ def user_button_pressed(button, code):
             probeTimer = 0
             probe_test_timer()
         elif not hal.get_value('plasmac.z-offset-counts'):
+            msg = bounds_check_probe(True)
+            if msg:
+                notifications.add('error', msg)
+                return
             activeFunction = True
             probePressed = True
             probeTimer = code['time'] * 1000
@@ -3305,6 +3511,9 @@ def ext_hal_create():
     # pins for pierce only offsets
     for pin in 'xy':
         comp.newpin(f"{pin}-pierce-offset", hal.HAL_FLOAT, hal.HAL_OUT)
+    # pins for pierce coordinate extents
+    for pin in ['x_min', 'y_min', 'x_max', 'y_max']:
+        comp.newpin(f"{pin}_pierce_extent", hal.HAL_FLOAT, hal.HAL_IN)
 
 # called every cycle by user_live_update
 def ext_hal_watch():
@@ -3902,7 +4111,7 @@ def set_orientation():
     user_button_setup()
     populate_settings_frame()
     for box in rSpinBoxes:
-        rE(f"{box} configure -font {fontGui}")
+        rE(f"{box} configure -font fontGui")
     color_change()
     set_window_size()
     load_materials(get_displayed_material(), keepTemp=True)
@@ -3933,6 +4142,7 @@ def set_orient_frames():
     rE(f"frame {fbuttons} -relief flat")
     rE(f"frame {fruns} -relief flat")
     make_torch_button()
+    make_dry_run_button()
     make_toolmat_frame()
     make_run_panel()
 
@@ -3944,6 +4154,16 @@ def make_torch_button():
         rE(f"{fbuttons}.torch-enable configure -height 1")
     rE(f"grid {fbuttons}.torch-enable -column 0 -row 0 -sticky new -padx {{2 0}} -pady {{2 0}}")
     rE(f"bind {fbuttons}.torch-enable <ButtonPress-1> torch_enable")
+
+def make_dry_run_button():
+    if pVars.orient.get() == 'portrait':
+        col = 1
+        row = 0
+    else:
+        col = 0
+        row = 1
+    rE(f"button {fbuttons}.dry-run -takefocus 0 -width 10 -highlightthickness 0 -text {{Dry Run}} -command {{task_run dry-run}}")
+    rE(f"grid {fbuttons}.dry-run -column {col} -row {row} -sticky new -padx {{2 0}} -pady {{2 0}}")
 
 def make_toolmat_frame():
     rE(f"frame {toolmat} -borderwidth 1 -relief raised")
@@ -4092,11 +4312,11 @@ def populate_settings_frame():
 
 def populate_user_buttons():
     if pVars.orient.get() == 'portrait':
-        col = 1
-        row = 0
-    else:
         col = 0
         row = 1
+    else:
+        col = 0
+        row = 2
     width = 0
     for n in range(1, maxUserButtons + 1):
         rE(f"grid forget {fbuttons}.button{n}")
@@ -4295,6 +4515,7 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
     singleCut = {'state':False, 'G91':False}
     framingState = False
     runState = False
+    dryRun = None
     lastMotionMode = None
     laserTimer = 0.0
     laserButtonState = 'laser'
@@ -4375,6 +4596,7 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
     TclCommands.backup_clicked = backup_clicked
     TclCommands.save_setup_clicked = save_setup_clicked
     TclCommands.load_setup_clicked = load_setup_clicked
+    TclCommands.clear_program = clear_program
     TclCommands.preview_toggle = preview_toggle
     TclCommands.setup_toggle = setup_toggle
     TclCommands.param_toggle = param_toggle
@@ -4441,6 +4663,7 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
     rE(f"font create fontGui -family {{{pVars.guiFont.get()}}} -size {pVars.fontSize.get()}")
     rE(f"font create fontArc -family {{{pVars.guiFont.get()}}} -size {int(pVars.fontSize.get())*3}")
     rE(f"font create fontCode -family {{{pVars.codeFont.get()}}} -size {pVars.fontSize.get()}")
+    update_check()
 
 
 ##############################################################################
@@ -4820,14 +5043,23 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
     rE('wm withdraw .keyp')
 
     # menu alterations
-    # delete existing
+	# remove tearoffs
+    rE('.menu.machine configure -tearoff 0')
+    rE('.menu.machine.home configure -tearoff 0')
+    rE('.menu.machine.unhome configure -tearoff 0')
+    # delete some existing
     rE('.menu.file delete last')
+    rE('.menu.machine delete last')
+    rE('.menu.machine delete last')
+    rE('.menu.machine delete last')
     rE('.menu.view delete 20')
     rE('.menu.view delete 8')
     rE('.menu.view delete 7')
     rE('.menu.view delete 6')
     rE('.menu delete last')
     # add new menu items
+    rE('.menu.file insert 2 command -command clear_program')
+    rE(f"setup_menu_accel .menu.file 2 {{{_('_Clear')}}}")
     rE('.menu.file add command -command close_window')
     rE(f"setup_menu_accel .menu.file end {{{_('_Quit')}}}")
     rE('.menu.view insert 0 checkbutton -variable previewLarge -command preview_toggle')
@@ -5387,6 +5619,7 @@ if os.path.isdir(os.path.join(p2Path, 'lib')):
     keyboard_bindings(value)
     statDivisor = 1000 if unitsPerMm == 1 else 1
     statSuffix = 'M' if unitsPerMm == 1 else '"'
+    unitSuffix = 'mm' if unitsPerMm == 1 else 'in'
     # we bring in some ints as floats so we can read QtPlasmaC statistics
     pVars.lengthS.set(getPrefs(PREF, 'STATISTICS', 'Cut length', 0, float))
     pVars.lengthJ.set(f"0.00{statSuffix}")
@@ -5598,7 +5831,7 @@ def user_live_update():
     global currentTool, pmx485, homeInProgress
     global materialChangePin, materialChangeNumberPin
     global materialReloadPin, materialTempPin
-    global materialChangeTimeoutPin
+    global materialChangeTimeoutPin, dryRun
     # set machine state variables
     isIdle = s.task_state == linuxcnc.STATE_ON and s.interp_state == linuxcnc.INTERP_IDLE
     isIdleHomed = isIdle and all_homed()
@@ -5629,6 +5862,10 @@ def user_live_update():
         if singleCut['G91']:
             ensure_mode(linuxcnc.MODE_MDI)
             c.mdi('G91')
+        # reset moving pierce
+        for pin in ['creep-speed', 'creep-speed-distance', 'cut-height-delay', 'gouge-speed', \
+                    'gouge-speed-distance', 'pierce-end-height', 'pierce-motion-delay', 'pierce-type']:
+            hal.set_p(f'plasmac.{pin}', '0')
     # override standard tool info
     if current_tool.id != currentTool:
         currentTool = current_tool.id
@@ -5709,6 +5946,21 @@ def user_live_update():
         comp['laser-on'] = 0
         framingState = False
         activeFunction = False
+        live_plotter.clear()
+    # dry run button state
+    wState = 'disabled' if rE('.toolbar.program_run cget -state') == 'disabled' or not loaded_file else 'normal'
+    rE(f"{fbuttons}.dry-run configure -state {wState}")
+    # reset after dry run
+    if dryRun and isIdle:
+        oldX = s.actual_position[0] - dryRun[0]
+        oldY = s.actual_position[1] - dryRun[1]
+        units = '20' if s.linear_units != 1 else '21'
+        ensure_mode(linuxcnc.MODE_MDI)
+        c.mdi(f'G{units} G10 L20 P0 X{oldX} Y{oldY}')
+        c.wait_complete()
+        dryRun = None
+        comp['laser-on'] = 0
+        hal.set_p('plasmac.dry-run', '0')
         live_plotter.clear()
     # set X0Y0, laser, and offset_setup buttons state
     wState = 'normal' if isIdleHomed else 'disabled'
@@ -6005,3 +6257,4 @@ def user_live_update():
     # run users custom periodic commands if it exists
     if os.path.isfile(upFile):
         exec(open(upFile).read())
+    o.tkRedraw()

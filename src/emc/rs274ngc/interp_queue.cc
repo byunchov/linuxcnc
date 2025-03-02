@@ -340,7 +340,7 @@ int enqueue_STRAIGHT_TRAVERSE(setup_pointer settings, int l,
     return 0;
 }
 
-void enqueue_ARC_FEED(setup_pointer settings, int l, 
+void enqueue_ARC_FEED(setup_pointer /*settings*/, int l,
                       double original_turns,
                       double end1, double end2, double center1, double center2,
                       int turn,
@@ -650,7 +650,7 @@ int Interp::move_endpoint_and_flush(setup_pointer settings, double x, double y) 
                 break;
             default:
                 ERS(_("BUG: Unsupported plane [%d] in cutter compensation"),
-			settings->plane);
+			static_cast<int>(settings->plane));
             }
 
             dot = x1 * x2 + y1 * y2;

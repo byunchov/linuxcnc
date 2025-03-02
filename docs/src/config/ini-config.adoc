@@ -212,7 +212,7 @@ Do _not_ use a file extension of '.ini' for included files.
 [[sub:ini:sec:emc]]
 === [EMC] Section(((INI File,Sections,[EMC] Section)))
 
-* `VERSION = 1.1` - The version number for the configuration.
+* `VERSION = 1.1` - The format version of this configuration.
   Any value other than 1.1 will cause the configuration checker to run and try to update the configuration to the new style joint axes type of configuration.
 * `MACHINE = My Controller` - This is the name of the controller, which is printed out at the top of most graphical interfaces.
   You can put whatever you want here as long as you make it a single line long.
@@ -289,6 +289,12 @@ Descriptions of the interfaces are in the Interfaces section of the User Manual.
   Usually the default is fine.
 * `PREVIEW_TIMEOUT = 5` - Timeout (in seconds) for loading graphical preview of G-code. Currently AXIS only.
 * `HOMING_PROMPT = TRUE` - Show prompt message with homing request, when the Power On button is pressed in AXIS GUI. Pressing the "Ok" button in prompt message is equivalent to pressing the "Home All" button(or the Ctrl-HOME key).
+* `FOAM_W = 1.5` sets the foam W height.
+* `FOAM_Z = 0` sets the foam Z height.
+* `GRAPHICAL_MAX_FILE_SIZE = 20` largest size (in mega bytes) that will be displayed graphically.
+  If the program is bigger than this setting, a bounding box will be displayed.
+  By default, this setting is at 20 MB or 1/4 of the system memory, which ever is smaller.
+  A negative value is interpreted as unlimited.
 
 [NOTE]
 The following [DISPLAY] items are used by GladeVCP and PyVCP,
@@ -315,7 +321,7 @@ See <<cha:gmoccapy,GMOCCAPY>> document for GMOCCAPY details.
   The INCREMENTS can be used to override the default.
   The values can be decimal numbers (e.g., 0.1000) or fractional numbers (e.g., 1/16), optionally followed by a unit (cm, mm, um, inch, in or mil).
   If a unit is not specified the machine unit is assumed.
-  Metric and imperial distances may be mixed: INCREMENTS = 1 inch, 1 mil, 1 cm, 1 mm, 1 µm is a valid entry.
+  Metric and imperial distances may be mixed: INCREMENTS = 1 inch, 1 mil, 1 cm, 1 mm, 1 um is a valid entry.
 * `GRIDS = 10 mm, 1 in, ...` - Defines the preset values for grid lines.
   The value is interpreted the same way as `INCREMENTS`.
 * `OPEN_FILE = /full/path/to/file.ngc` - The file to show in the preview plot when AXIS starts.
@@ -895,6 +901,11 @@ LinuxCNC will not know your joint travel limits when using `NO_FORCE_HOMING = 1`
 
 The _<letter>_ specifies one of: X Y Z A B C U V W
 
+* `TYPE = LINEAR` - The type of this axis, either `LINEAR` or `ANGULAR`.
+  Required if this axis is not a default axis type.
+  The default axis types are X,Y,Z,U,V,W = LINEAR and A,B,C = ANGULAR.
+  This setting is effective with the AXIS GUI but note that other
+  GUI's may handle things differently.
 * `MAX_VELOCITY = 1.2` - Maximum velocity for this axis in <<sub:ini:sec:traj,machine units>> per second.
 * `MAX_ACCELERATION = 20.0` - Maximum acceleration for this axis in machine units per second squared.
 * `MIN_LIMIT = -1000` - (((MIN LIMIT))) The minimum limit (soft limit) for axis motion, in machine units.
@@ -1306,19 +1317,18 @@ image::images/encoder-scale.png[align="center"]
 
 The _<num>_ specifies the spindle number 0 ... (num_spindles-1) +
 The value of _num_spindles_ is set by `[TRAJ]SPINDLES=` . +
-By default maximum velocity of the spindle in forward and reverse is approximately
-  2147483000 RPM. +
+By default maximum velocity of the spindle in forward and reverse is approximately 2147483000 RPM. +
 By default minimum velocity of the spindle in forward and reverse is 0 RPM. +
 By default the increment is 100 RPM. +
 You change these default by setting the following INI variables:
 
 [NOTE]
-These settings are for the motion controller component. Control screens can limit
- these settings further. 
+These settings are for the motion controller component.
+Control screens can limit these settings further. 
 
 * `MAX_FORWARD_VELOCITY = 20000`
   The maximum spindle speed (in rpm) for the specified spindle. Optional.
-  This will also set MIN_FORWARD_VELOCITY to the negative value unless overridden.
+  This will also set MAX_REVERSE_VELOCITY to the negative value unless overridden.
 * `MIN_FORWARD_VELOCITY = 3000`
   The minimum spindle speed (in rpm) for the specified spindle. Optional.
   Many spindles have a minimum speed below which they should not be run.

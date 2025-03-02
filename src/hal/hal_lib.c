@@ -1878,6 +1878,32 @@ int hal_get_param_value_by_name(
 
 #ifdef RTAPI
 
+static int hal_export_functfv(void (*funct) (void *, long),
+    void *arg, int uses_fp, int reentrant, int comp_id, const char *fmt, va_list ap)
+{
+    char name[HAL_NAME_LEN + 1];
+    int sz;
+    sz = rtapi_vsnprintf(name, sizeof(name), fmt, ap);
+    if(sz == -1 || sz > HAL_NAME_LEN) {
+        rtapi_print_msg(RTAPI_MSG_ERR,
+	    "hal_export_functfv: length %d too long for name starting '%s'\n",
+	    sz, name);
+        return -ENOMEM;
+    }
+    return hal_export_funct(name, funct, arg, uses_fp, reentrant, comp_id);
+}
+
+int hal_export_functf(void (*funct) (void *, long),
+    void *arg, int uses_fp, int reentrant, int comp_id, const char *fmt, ...)
+{
+    va_list ap;
+    int ret;
+    va_start(ap, fmt);
+    ret = hal_export_functfv(funct, arg, uses_fp, reentrant, comp_id, fmt, ap);
+    va_end(ap);
+    return ret;
+}
+
 int hal_export_funct(const char *name, void (*funct) (void *, long),
     void *arg, int uses_fp, int reentrant, int comp_id)
 {
@@ -3818,29 +3844,34 @@ static bool hal_port_compute_copy(unsigned read,
 }
 
 
-hal_port_t hal_port_alloc(unsigned size) {
+int hal_port_alloc(unsigned size, hal_port_t *port) {
+    if(!port)
+        return -EINVAL;
+
     hal_port_shm_t* new_port = shmalloc_up(sizeof(hal_port_shm_t) + size);
 
-    memset(new_port, 0, sizeof(hal_port_shm_t));
+    if(!new_port)
+        return -ENOMEM;
 
+    memset(new_port, 0, sizeof(hal_port_shm_t));
     new_port->size = size;
 
-    return SHMOFF(new_port);
+    *port = SHMOFF(new_port);
+    return 0;
 }
 
 
-bool hal_port_read(hal_port_t port, char* dest, unsigned count) {
+bool hal_port_read(const hal_port_t *port, char* dest, unsigned count) {
     unsigned read,
              write,
              end_bytes_to_read,   //number of bytes to read after read position and before end of buffer
              beg_bytes_to_read,   //number of bytes to read at beginning of buffer
              final_pos;           //final position after read
-    hal_port_shm_t* port_shm = SHMPTR(port);
-    
 
-    if(!port || !count) {
+    if(!port || !*port || !count) {
         return false;
     } else {
+        hal_port_shm_t* port_shm = SHMPTR(*port);
         hal_port_atomic_load(port_shm, &read, &write);
 
         if(hal_port_compute_copy(read, 
@@ -3862,17 +3893,17 @@ bool hal_port_read(hal_port_t port, char* dest, unsigned count) {
 }   
 
 
-bool hal_port_peek(hal_port_t port, char* dest, unsigned count) {
+bool hal_port_peek(const hal_port_t *port, char* dest, unsigned count) {
     unsigned read,
              write,
              end_bytes_to_read,   //number of bytes to read after read position and before end of buffer
              beg_bytes_to_read,   //number of bytes to read at beginning of buffer
              final_pos;           //final position of read
-    hal_port_shm_t* port_shm = SHMPTR(port);
 
-    if(!port || !count) {
+    if(!port || !*port || !count) {
         return false;
     } else {
+        hal_port_shm_t* port_shm = SHMPTR(*port);
         hal_port_atomic_load(port_shm, &read, &write);
 
         if(hal_port_compute_copy(read, 
@@ -3893,17 +3924,17 @@ bool hal_port_peek(hal_port_t port, char* dest, unsigned count) {
 }
 
 
-bool hal_port_peek_commit(hal_port_t port, unsigned count) {
+bool hal_port_peek_commit(const hal_port_t *port, unsigned count) {
     unsigned read,
              write,
              end_bytes_to_read,   //number of bytes to read after read position and before end of buffer
              beg_bytes_to_read,   //number of bytes to read at beginning of buffer
              final_pos;           //final position of read
-    hal_port_shm_t* port_shm = SHMPTR(port);
 
-    if(!port || !count) {
+    if(!port || !*port || !count) {
         return false;
     } else {
+        hal_port_shm_t* port_shm = SHMPTR(*port);
         hal_port_atomic_load(port_shm, &read, &write);
 
         if(hal_port_compute_copy(read,
@@ -3923,7 +3954,7 @@ bool hal_port_peek_commit(hal_port_t port, unsigned count) {
 }
 
 
-bool hal_port_write(hal_port_t port, const char* src, unsigned count) {
+bool hal_port_write(const hal_port_t *port, const char* src, unsigned count) {
     unsigned read,
              write,
              bytes_avail,
@@ -3931,12 +3962,11 @@ bool hal_port_write(hal_port_t port, const char* src, unsigned count) {
              end_bytes_to_write,
              beg_bytes_to_write,
              final_pos;
-   
-    hal_port_shm_t* port_shm = SHMPTR(port);
  
-    if(!port || !count) {
+    if(!port || !*port || !count) {
 	    return false;
     } else {
+       hal_port_shm_t* port_shm = SHMPTR(*port);
        hal_port_atomic_load(port_shm, &read, &write);
        bytes_avail = hal_port_bytes_writable(read, write, port_shm->size);
 
@@ -3976,42 +4006,40 @@ bool hal_port_write(hal_port_t port, const char* src, unsigned count) {
 }
 
 
-unsigned hal_port_readable(hal_port_t port) {
-    hal_port_shm_t* port_shm = SHMPTR(port);
-
-    if(!port) {
+unsigned hal_port_readable(const hal_port_t *port) {
+    if(!port || !*port) {
         return 0;
     } else {
+        hal_port_shm_t* port_shm = SHMPTR(*port);
         return hal_port_bytes_readable(port_shm->read, port_shm->write, port_shm->size);
     }
 }
 
 
-unsigned hal_port_writable(hal_port_t port) {
-    hal_port_shm_t* port_shm = SHMPTR(port);
-             
-    if(!port) {
+unsigned hal_port_writable(const hal_port_t *port) {
+    if(!port || !*port) {
         return 0;
     } else {
+        hal_port_shm_t* port_shm = SHMPTR(*port);
         return hal_port_bytes_writable(port_shm->read, port_shm->write, port_shm->size);
     }
 }
 
 
-unsigned hal_port_buffer_size(hal_port_t port) {
-    if(!port) {
+unsigned hal_port_buffer_size(const hal_port_t *port) {
+    if(!port || !*port) {
         return 0;
     } else {
-        return ((hal_port_shm_t*)SHMPTR(port))->size;
+        return ((hal_port_shm_t*)SHMPTR(*port))->size;
     }
 }
 
 
-void hal_port_clear(hal_port_t port) {
+void hal_port_clear(const hal_port_t *port) {
     unsigned read,write;
-    hal_port_shm_t* port_shm = SHMPTR(port);
 
-    if(port) {
+    if(port && *port) {
+        hal_port_shm_t* port_shm = SHMPTR(*port);
         hal_port_atomic_load(port_shm, &read, &write);
         hal_port_atomic_store_read(port_shm, write);
     }
@@ -4020,14 +4048,14 @@ void hal_port_clear(hal_port_t port) {
 
 #ifdef ULAPI
 void hal_port_wait_readable(hal_port_t** port, unsigned count, sig_atomic_t* stop) {
-    while((hal_port_readable(**port) < count) && (!stop || !*stop)) {
+    while((hal_port_readable(*port) < count) && (!stop || !*stop)) {
         rtapi_delay(10000000);
     }
 }
 
 
 void hal_port_wait_writable(hal_port_t** port, unsigned count, sig_atomic_t* stop) {
-    while((hal_port_writable(**port) < count) && (!stop || !*stop)) {
+    while((hal_port_writable(*port) < count) && (!stop || !*stop)) {
         rtapi_delay(10000000);
     }
 }
@@ -4083,12 +4111,12 @@ int halpr_parse_types(hal_type_t type[HAL_STREAM_MAX_PINS], const char *cfg)
     return n;
 }
 
-int hal_stream_create(hal_stream_t *stream, int comp, int key, int depth, const char *typestring)
+int hal_stream_create(hal_stream_t *stream, int comp, int key, unsigned depth, const char *typestring)
 {
     int result = 0;
     hal_type_t type[HAL_STREAM_MAX_PINS];
     result = halpr_parse_types(type, typestring);
-    if(result < 0) return result;
+    if(!result) return -EINVAL;
     int pin_count = result;
 
     size_t size = sizeof(struct hal_stream_shm) + sizeof(union hal_stream_data) * depth * (1+pin_count);
@@ -4116,13 +4144,13 @@ extern void hal_stream_destroy(hal_stream_t *stream)
     hal_stream_detach(stream);
 }
 
-static int hal_stream_advance(hal_stream_t *stream, int n) {
+static unsigned hal_stream_advance(hal_stream_t *stream, unsigned n) {
     n = n + 1;
     if(n >= stream->fifo->depth) n = 0;
     return n;
 }
 
-static int hal_stream_newin(hal_stream_t *stream) {
+static unsigned hal_stream_newin(hal_stream_t *stream) {
     return hal_stream_advance(stream, stream->fifo->in);
 }
 
@@ -4142,7 +4170,7 @@ int hal_stream_depth(hal_stream_t *stream) {
     return result;
 }
 
-int hal_stream_maxdepth(hal_stream_t *stream) {
+unsigned hal_stream_maxdepth(hal_stream_t *stream) {
     return stream->fifo->depth;
 }
 
@@ -4252,7 +4280,7 @@ int hal_stream_attach(hal_stream_t *stream, int comp_id, int key, const char *ty
         }
     }
     /* now use data in fifo structure to calculate proper shmem size */
-    int depth = fifo->depth;
+    unsigned depth = fifo->depth;
     int pin_count = fifo->num_pins;
     size_t size = sizeof(struct hal_stream_shm) + sizeof(union hal_stream_data) * depth * (1+pin_count);
     /* close shmem, re-open with proper size */
@@ -4361,6 +4389,7 @@ EXPORT_SYMBOL(hal_param_set);
 EXPORT_SYMBOL(hal_set_constructor);
 
 EXPORT_SYMBOL(hal_export_funct);
+EXPORT_SYMBOL(hal_export_functf);
 
 EXPORT_SYMBOL(hal_create_thread);
 

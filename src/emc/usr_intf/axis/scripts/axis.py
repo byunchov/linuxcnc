@@ -120,6 +120,7 @@ inifile = linuxcnc.ini(sys.argv[2])
 ap = AxisPreferences()
 
 os.system("xhost -SI:localuser:gdm -SI:localuser:root > /dev/null 2>&1")
+os.system("xset r off")
 root_window = Tkinter.Tk(className="Axis")
 dpi_value = root_window.winfo_fpixels('1i')
 root_window.tk.call('tk', 'scaling', '-displayof', '.', dpi_value / 72.0)
@@ -153,6 +154,7 @@ except TclError:
 def General_Halt():
     text = _("Do you really want to close LinuxCNC?")
     if not root_window.tk.call("nf_dialog", ".error", _("Confirm Close"), text, "warning", 1, _("Yes"), _("No")):
+        os.system("xset r on")
         root_window.destroy()
 
 root_window.protocol("WM_DELETE_WINDOW", General_Halt)
@@ -1179,8 +1181,6 @@ def open_file_guts(f, filtered=False, addrecent=True):
     if addrecent:
         add_recent_file(f)
     if not filtered:
-        global loaded_file
-        loaded_file = f
         program_filter = get_filter(f)
         if program_filter:
             tempfile = os.path.join(tempdir, "filtered-" + os.path.basename(f))
@@ -2006,6 +2006,9 @@ class TclCommands(nf.TclCommands):
     def redraw_soon(event=None):
         o.redraw_soon()
 
+    def redraw_dro(event=None):
+        o.redraw_dro()
+
     def to_internal_linear_unit(a, b=None):
         if b is not None: b = float(b)
         return to_internal_linear_unit(float(a), b)
@@ -2267,6 +2270,8 @@ class TclCommands(nf.TclCommands):
         return ""
 
     def open_file_name(f):
+        global loaded_file
+        loaded_file = f
         open_file_guts(f)
         if str(widgets.view_x['relief']) == "sunken":
             commands.set_view_x()
@@ -2350,9 +2355,8 @@ class TclCommands(nf.TclCommands):
         res = 1
         while res == 1:
             res = run_warn()
-            if res == 2: break
+            if res in [0, 2]: break
             if res == 3: return
-            print("reload file")
             reload_file()
 
         global program_start_line, program_start_line_last
@@ -2762,10 +2766,12 @@ class TclCommands(nf.TclCommands):
     def touch_off_system(event=None, new_axis_value = None):
         global system
         if not manual_ok(): return
+
+        touchoff_actual_position = inifile.find(f"AXIS_{vars.ja_rbutton.get().upper()}", "TOUCHOFF_ACTUAL")
         offset_axis = trajcoordinates.index(vars.ja_rbutton.get())
         if new_axis_value is None:
             new_axis_value, system = prompt_touchoff(
-                title=_("Touch Off (system)"),
+                title=_(f"Touch Off ({'system' if touchoff_actual_position is None else 'system ACTUAL'})"),
                 text=_("Enter %s coordinate relative to %%s:") % vars.ja_rbutton.get().upper(),
                 default=0.0,
                 tool_only=False,
@@ -2786,6 +2792,9 @@ class TclCommands(nf.TclCommands):
 
         if linear_axis and 210 in s.gcodes:
             scale *= 25.4
+
+        if touchoff_actual_position is not None:
+            new_axis_value = str(float(new_axis_value) + (-1.0 if touchoff_actual_position.upper() == "MINUS" else 1.0) * s.actual_position[offset_axis])
 
         offset_command = "G10 L20 %s %c[[%s]*%.12f]" % (system.split()[0], vars.ja_rbutton.get(), new_axis_value, scale)
         c.mdi(offset_command)
@@ -3356,6 +3365,7 @@ extensions = inifile.findall("FILTER", "PROGRAM_EXTENSION")
 extensions = [e.split(None, 1) for e in extensions]
 extensions = tuple([(v, tuple(k.split(","))) for k, v in extensions])
 postgui_halfile = inifile.findall("HAL", "POSTGUI_HALFILE") or None
+postgui_halcmds = inifile.findall("HAL", "POSTGUI_HALCMD") or None
 max_feed_override = float(inifile.find("DISPLAY", "MAX_FEED_OVERRIDE") or 1.0)
 max_spindle_override = float(inifile.find("DISPLAY", "MAX_SPINDLE_OVERRIDE") or max_feed_override)
 max_feed_override = int(max_feed_override * 100 + 0.5)
@@ -4104,6 +4114,13 @@ def check_dynamic_tabs():
                 else:
                     res = os.spawnvp(os.P_WAIT, "halcmd", ["halcmd", "-i", vars.emcini.get(), "-f", f])
                 if res: raise SystemExit(res)
+
+        if postgui_halcmds is not None:
+            for f in postgui_halcmds:
+                f = os.path.expanduser(f)
+                res = os.spawnvp(os.P_WAIT, "halcmd", ["halcmd"] + f.split())
+                if res: raise SystemExit(res)
+
         root_window.deiconify()
         destroy_splash()
         return
